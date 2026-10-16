@@ -117,6 +117,12 @@ def init_db(db_path: Path = DB_PATH):
         )
     ''')
 
+    # Ensure nfl_team exists if weekly_nfl_stats was previously created
+    cur.execute("PRAGMA table_info(weekly_nfl_stats);")
+    stats_cols = [c[1] for c in cur.fetchall()]
+    if 'nfl_team' not in stats_cols and len(stats_cols) > 0:
+        cur.execute("ALTER TABLE weekly_nfl_stats ADD COLUMN nfl_team TEXT;")
+
     cur.execute('''
         CREATE TABLE IF NOT EXISTS roster_moves (
             transaction_id TEXT PRIMARY KEY,
@@ -240,6 +246,9 @@ def load_league_data(
     if not db_path.exists():
         empty = pd.DataFrame()
         return empty, empty, empty, empty
+
+    # Ensure schema migrations are applied on existing databases
+    init_db(db_path)
 
     conn = get_connection(db_path)
 
