@@ -12,7 +12,7 @@ except ImportError:
     pass
 
 # Application Version (managed directly in code repository)
-VERSION = "1.10.0"
+VERSION = "1.11.0"
 
 # Paths
 BASE_DIR = Path(__file__).resolve().parent.parent
