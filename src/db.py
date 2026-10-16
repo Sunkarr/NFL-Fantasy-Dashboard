@@ -123,6 +123,16 @@ def init_db(db_path: Path = DB_PATH):
     if 'nfl_team' not in stats_cols and len(stats_cols) > 0:
         cur.execute("ALTER TABLE weekly_nfl_stats ADD COLUMN nfl_team TEXT;")
 
+    # Backfill missing or NULL nfl_team values from master players table
+    cur.execute('''
+        UPDATE weekly_nfl_stats 
+        SET nfl_team = (
+            SELECT p.nfl_team FROM players p WHERE p.player_id = weekly_nfl_stats.player_id
+        )
+        WHERE (nfl_team IS NULL OR nfl_team = '' OR nfl_team = 'nan' OR nfl_team = 'None' OR nfl_team = 'FA')
+          AND EXISTS (SELECT 1 FROM players p WHERE p.player_id = weekly_nfl_stats.player_id AND p.nfl_team IS NOT NULL AND p.nfl_team != '');
+    ''')
+
     cur.execute('''
         CREATE TABLE IF NOT EXISTS roster_moves (
             transaction_id TEXT PRIMARY KEY,
@@ -290,7 +300,7 @@ def load_league_data(
         # 4. Weekly NFL Stats with player metadata & ownership (filtered strictly to season)
         nfl_stats = pd.read_sql_query('''
             SELECT s.season, s.week, s.player_id, p.full_name as player_name, p.position, 
-                   COALESCE(s.nfl_team, p.nfl_team, 'FA') as nfl_team,
+                   COALESCE(NULLIF(NULLIF(NULLIF(NULLIF(s.nfl_team, 'nan'), 'None'), 'NULL'), ''), p.nfl_team, 'FA') as nfl_team,
                    p.injury_status, COALESCE(t.team_name, 'Free Agent') as current_owner,
                    s.points, s.pass_yd, s.pass_td, s.pass_int, s.rush_yd, s.rush_td, s.rec, s.rec_yd, s.rec_td
             FROM weekly_nfl_stats s

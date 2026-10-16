@@ -5,6 +5,19 @@ import sqlite3
 from pathlib import Path
 from src.config import TEAM_PALETTE, FREE_AGENT_COLOR, NFL_TEAM_COLORS, NFL_TEAM_NAMES
 
+def resolve_nfl_team(val: Any, fallback: str = "FA") -> str:
+    """Safely resolve NFL franchise abbreviation without NaN / None / 'nan' strings."""
+    if val is None or pd.isna(val):
+        candidate = str(fallback or "FA").strip().upper()
+    else:
+        candidate = str(val).strip().upper()
+    if not candidate or candidate in ("NAN", "NONE", "NULL", "FA", ""):
+        candidate = str(fallback or "FA").strip().upper()
+    if not candidate or candidate in ("NAN", "NONE", "NULL", ""):
+        return "FA"
+    return candidate
+
+
 
 def get_player_selection_options(
     df_player_stats: pd.DataFrame,
@@ -215,7 +228,9 @@ def get_player_detailed_analytics(
         try:
             with sqlite3.connect(db_path) as conn:
                 all_db_stats = pd.read_sql_query("""
-                    SELECT season, week, nfl_team, points, pass_yd, pass_td, pass_int,
+                    SELECT season, week, 
+                           COALESCE(NULLIF(NULLIF(NULLIF(NULLIF(nfl_team, 'nan'), 'None'), 'NULL'), ''), '') as nfl_team,
+                           points, pass_yd, pass_td, pass_int,
                            rush_yd, rush_td, rec, rec_yd, rec_td
                     FROM weekly_nfl_stats
                     WHERE player_id = ?
@@ -244,8 +259,8 @@ def get_player_detailed_analytics(
             s = str(sr['season'])
             w = int(sr['week'])
             pts = float(sr['points']) if pd.notna(sr['points']) else 0.0
-            row_team = str(sr.get('nfl_team') or nfl_team or 'FA')
-            bar_color = NFL_TEAM_COLORS.get(row_team.upper(), '#00338D')
+            row_team = resolve_nfl_team(sr.get('nfl_team'), fallback=nfl_team)
+            bar_color = NFL_TEAM_COLORS.get(row_team, '#00338D')
 
             if s == '2026':
                 points_2026_list.append(pts)
@@ -291,8 +306,8 @@ def get_player_detailed_analytics(
                     f_status = "Started" if m_info['started'] == 1 else "Bench"
                 else:
                     f_status = "Free Agent" if team_name == "Free Agent" else "Rostered"
-                row_team = str(sr.get('nfl_team') or nfl_team or 'FA')
-                bar_color = NFL_TEAM_COLORS.get(row_team.upper(), '#00338D')
+                row_team = resolve_nfl_team(sr.get('nfl_team'), fallback=nfl_team)
+                bar_color = NFL_TEAM_COLORS.get(row_team, '#00338D')
                 weekly_records.append({
                     'season': '2026',
                     'week': w,
@@ -918,20 +933,24 @@ def _build_profile_kpi_html(data: Dict[str, Any]) -> str:
 
 def _build_chart_header_html(data: Dict[str, Any]) -> str:
     df_w = data.get('weekly_df', pd.DataFrame())
+    unique_teams = []
     if not df_w.empty and 'nfl_team' in df_w.columns:
-        # Collect all unique NFL teams in reverse chronological appearance order
-        unique_teams = []
         for t in df_w.sort_values(by=['season', 'week'], ascending=[False, False])['nfl_team'].dropna().unique():
-            t_str = str(t).strip()
-            if t_str and t_str not in unique_teams and t_str != 'FA':
-                unique_teams.append(t_str)
-    else:
-        unique_teams = [data['nfl_team']]
+            t_clean = resolve_nfl_team(t, fallback="")
+            if t_clean and t_clean not in ('FA', '') and t_clean not in unique_teams:
+                unique_teams.append(t_clean)
+
+    curr_team = resolve_nfl_team(data.get('nfl_team'), fallback="")
+    if curr_team and curr_team not in ('FA', '') and curr_team not in unique_teams:
+        unique_teams.insert(0, curr_team)
+
+    if not unique_teams and curr_team:
+        unique_teams = [curr_team]
 
     team_badges = []
     for t_code in unique_teams:
-        t_col = NFL_TEAM_COLORS.get(t_code.upper(), '#00338D')
-        t_full = NFL_TEAM_NAMES.get(t_code.upper(), t_code)
+        t_col = NFL_TEAM_COLORS.get(t_code, '#00338D')
+        t_full = NFL_TEAM_NAMES.get(t_code, t_code)
         team_badges.append(
             f"<span style='display:inline-flex; align-items:center; gap:5px; font-size:0.75rem; color:#475569; font-weight:600;'><span style='display:inline-block; width:10px; height:10px; background:{t_col}; border-radius:2px;'></span> {t_full}</span>"
         )
@@ -968,7 +987,7 @@ def _build_profile_log_table_html(data: Dict[str, Any]) -> str:
             s_val = str(wr.get('season', '2026'))
             s_badge = f"<span style='background:#eff6ff; color:#1d4ed8; font-weight:800; font-size:0.72rem; border-radius:4px; padding:2px 6px; border:1px solid #bfdbfe;'>2026</span>" if s_val == '2026' else f"<span style='background:#f1f5f9; color:#64748b; font-weight:700; font-size:0.72rem; border-radius:4px; padding:2px 6px;'>{s_val}</span>"
 
-            team_val = str(wr.get('nfl_team', data['nfl_team']))
+            team_val = resolve_nfl_team(wr.get('nfl_team'), fallback=data.get('nfl_team', 'FA'))
             t_color = NFL_TEAM_COLORS.get(team_val.upper(), '#00338D')
             team_badge = f"<span style='background:{t_color}18; color:{t_color}; border:1px solid {t_color}40; font-weight:800; font-size:0.72rem; border-radius:4px; padding:2px 6px;'>{team_val}</span>"
 
