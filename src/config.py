@@ -50,3 +50,77 @@ FREE_AGENT_COLOR = '#94a3b8'  # Slate grey
 # Database sync metadata keys
 METADATA_LAST_SYNC = "last_sync_timestamp"
 METADATA_VERSION = "schema_version"
+
+# Full NFL Team Franchise Names
+NFL_TEAM_NAMES = {
+    'ARI': 'Arizona Cardinals',
+    'ATL': 'Atlanta Falcons',
+    'BAL': 'Baltimore Ravens',
+    'BUF': 'Buffalo Bills',
+    'CAR': 'Carolina Panthers',
+    'CHI': 'Chicago Bears',
+    'CIN': 'Cincinnati Bengals',
+    'CLE': 'Cleveland Browns',
+    'DAL': 'Dallas Cowboys',
+    'DEN': 'Denver Broncos',
+    'DET': 'Detroit Lions',
+    'GB':  'Green Bay Packers',
+    'HOU': 'Houston Texans',
+    'IND': 'Indianapolis Colts',
+    'JAX': 'Jacksonville Jaguars',
+    'KC':  'Kansas City Chiefs',
+    'LAC': 'Los Angeles Chargers',
+    'LAR': 'Los Angeles Rams',
+    'LV':  'Las Vegas Raiders',
+    'MIA': 'Miami Dolphins',
+    'MIN': 'Minnesota Vikings',
+    'NE':  'New England Patriots',
+    'NO':  'New Orleans Saints',
+    'NYG': 'New York Giants',
+    'NYJ': 'New York Jets',
+    'PHI': 'Philadelphia Eagles',
+    'PIT': 'Pittsburgh Steelers',
+    'SEA': 'Seattle Seahawks',
+    'SF':  'San Francisco 49ers',
+    'TB':  'Tampa Bay Buccaneers',
+    'TEN': 'Tennessee Titans',
+    'WAS': 'Washington Commanders',
+    'FA':  'Free Agent',
+}
+
+# Official NFL Team Primary Colors
+NFL_TEAM_COLORS = {
+    'ARI': '#97233F',  # Arizona Cardinals
+    'ATL': '#A71930',  # Atlanta Falcons
+    'BAL': '#241773',  # Baltimore Ravens
+    'BUF': '#00338D',  # Buffalo Bills
+    'CAR': '#0085CA',  # Carolina Panthers
+    'CHI': '#0B162A',  # Chicago Bears
+    'CIN': '#FB4F14',  # Cincinnati Bengals
+    'CLE': '#FF3C00',  # Cleveland Browns
+    'DAL': '#003594',  # Dallas Cowboys
+    'DEN': '#FB4F14',  # Denver Broncos
+    'DET': '#0076B6',  # Detroit Lions
+    'GB':  '#203731',  # Green Bay Packers
+    'HOU': '#03202F',  # Houston Texans
+    'IND': '#002C5F',  # Indianapolis Colts
+    'JAX': '#006778',  # Jacksonville Jaguars
+    'KC':  '#E31837',  # Kansas City Chiefs
+    'LAC': '#0080C6',  # Los Angeles Chargers
+    'LAR': '#003594',  # Los Angeles Rams
+    'LV':  '#000000',  # Las Vegas Raiders
+    'MIA': '#008E97',  # Miami Dolphins
+    'MIN': '#4F2683',  # Minnesota Vikings
+    'NE':  '#002244',  # New England Patriots
+    'NO':  '#D3BC8D',  # New Orleans Saints
+    'NYG': '#0B2265',  # New York Giants
+    'NYJ': '#125740',  # New York Jets
+    'PHI': '#004C54',  # Philadelphia Eagles
+    'PIT': '#FFB612',  # Pittsburgh Steelers
+    'SEA': '#002244',  # Seattle Seahawks
+    'SF':  '#AA0000',  # San Francisco 49ers
+    'TB':  '#D50A0A',  # Tampa Bay Buccaneers
+    'TEN': '#0C2340',  # Tennessee Titans
+    'WAS': '#5A1414',  # Washington Commanders
+    'FA':  '#94A3B8',  # Free Agent
+}

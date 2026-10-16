@@ -9,10 +9,11 @@ def calculate_player_trade_values(
     df_player_stats: pd.DataFrame,
     mode: str = "ppg",
     scoring_settings: Optional[Dict[str, float]] = None,
-    projections: Optional[Dict[str, Any]] = None
+    projections: Optional[Dict[str, Any]] = None,
+    include_free_agents: bool = True
 ) -> pd.DataFrame:
     """
-    Calculate market trade values (0 - 100 scale) for all rostered players.
+    Calculate market trade values (0 - 100 scale) for all rostered and active free agent players.
     Incorporates:
     - Base production (PPG / Projections)
     - Positional Scarcity Weight (RB/WR/TE carry high trade premium vs QB/K/DEF)
@@ -21,18 +22,51 @@ def calculate_player_trade_values(
     - Injury Status discount
     - Positional Percentiles (contextual rank within position)
     """
-    if df_rosters is None or df_rosters.empty:
+    df = df_rosters.copy() if df_rosters is not None and not df_rosters.empty else pd.DataFrame()
+    if 'player_id' in df.columns:
+        df['player_id'] = df['player_id'].astype(str)
+
+    # Include active unowned / free agent players so their trade / market value is fully evaluated
+    if include_free_agents and df_player_stats is not None and not df_player_stats.empty:
+        rostered_pids = set(df['player_id'].astype(str)) if 'player_id' in df.columns else set()
+        fa_players = df_player_stats[
+            ~df_player_stats['player_id'].astype(str).isin(rostered_pids) &
+            (df_player_stats['mean_points'] > 0)
+        ].copy()
+        if not fa_players.empty:
+            fa_rows = []
+            for _, r in fa_players.iterrows():
+                fa_rows.append({
+                    'player_id': str(r['player_id']),
+                    'player_name': str(r.get('player_name', r['player_id'])),
+                    'position': str(r.get('position', 'WR')),
+                    'nfl_team': str(r.get('nfl_team', 'FA')),
+                    'team_name': 'Free Agent',
+                    'owner_name': 'Free Agent',
+                    'roster_id': None,
+                    'is_starter': 0,
+                    'is_reserve': 0,
+                    'injury_status': str(r.get('injury_status', 'Healthy'))
+                })
+            df = pd.concat([df, pd.DataFrame(fa_rows)], ignore_index=True)
+
+    if df.empty:
         return pd.DataFrame()
 
-    df = df_rosters.copy()
     if df_player_stats is not None and not df_player_stats.empty:
-        # Select only stats-specific columns that are not already uniquely in df_rosters (or let stats update them)
         stats_cols = [
             "player_id", "mean_points", "std_points", "games_played",
             "pos_rank", "headshot_url"
         ]
         available_cols = [col for col in stats_cols if col in df_player_stats.columns]
-        df = df.merge(df_player_stats[available_cols], on="player_id", how="left")
+        cols_to_drop = [c for c in available_cols if c != "player_id" and c in df.columns]
+        if cols_to_drop:
+            df = df.drop(columns=cols_to_drop)
+
+        df['player_id'] = df['player_id'].astype(str)
+        df_stats_copy = df_player_stats[available_cols].copy()
+        df_stats_copy['player_id'] = df_stats_copy['player_id'].astype(str)
+        df = df.merge(df_stats_copy, on="player_id", how="left")
 
     # Fill defaults
     if "position" not in df.columns:
@@ -108,6 +142,12 @@ def calculate_player_trade_values(
     }
 
     trade_values = []
+    baselines = []
+    weights = []
+    vorps = []
+    elite_mults = []
+    inj_discounts = []
+
     for _, row in df.iterrows():
         pos = str(row.get("position", "WR")).upper()
         pts = float(row.get("score", 0.0)) if pd.notna(row.get("score")) else 0.0
@@ -125,35 +165,51 @@ def calculate_player_trade_values(
         raw_val = (vorp * 3.5 * weight) + (pts * 1.1 * weight)
 
         # Elite rank bonuses (Top tier game-changers have exponential trade leverage)
+        elite_mult = 1.00
         if pos in ["RB", "WR"]:
             if rk <= 3:
-                raw_val *= 1.35
+                elite_mult = 1.35
             elif rk <= 6:
-                raw_val *= 1.22
+                elite_mult = 1.22
             elif rk <= 12:
-                raw_val *= 1.12
+                elite_mult = 1.12
             elif rk <= 20:
-                raw_val *= 1.05
+                elite_mult = 1.05
         elif pos == "TE":
             if rk <= 2:
-                raw_val *= 1.40
+                elite_mult = 1.40
             elif rk <= 5:
-                raw_val *= 1.20
+                elite_mult = 1.20
         elif pos == "QB":
             if rk <= 2:
-                raw_val *= 1.25
+                elite_mult = 1.25
             elif rk <= 5:
-                raw_val *= 1.10
+                elite_mult = 1.10
+
+        raw_val *= elite_mult
 
         # Injury discount
+        inj_mult = 1.00
         if inj in ["Out", "IR", "PUP", "Doubtful", "NA", "Sus"]:
-            raw_val *= 0.60
+            inj_mult = 0.60
         elif inj == "Questionable":
-            raw_val *= 0.90
+            inj_mult = 0.90
+
+        raw_val *= inj_mult
 
         trade_values.append(raw_val)
+        baselines.append(round(baseline, 1))
+        weights.append(round(weight, 2))
+        vorps.append(round(vorp, 1))
+        elite_mults.append(round(elite_mult, 2))
+        inj_discounts.append(round(inj_mult, 2))
 
     df["raw_trade_value"] = trade_values
+    df["baseline"] = baselines
+    df["scarcity_weight"] = weights
+    df["vorp"] = vorps
+    df["elite_multiplier"] = elite_mults
+    df["injury_discount"] = inj_discounts
 
     # Normalize to 0 - 100 scale
     max_raw = max(df["raw_trade_value"].max(), 1.0)
@@ -1322,6 +1378,17 @@ def render_player_market_view(
         return mo.md("No player market data available.")
 
     from src.visual import build_market_value_scatter_chart
+
+    # Filter strictly to rostered (owned) fantasy players on the Player Market page
+    rostered_mask = (
+        (val_df["team_name"].notna()) &
+        (val_df["team_name"] != "Free Agent") &
+        (val_df["team_name"] != "")
+    )
+    val_df = val_df[rostered_mask].copy()
+
+    if val_df.empty:
+        return mo.md("No rostered player market data available.")
 
     # Apply filters
     filtered = val_df.copy()

@@ -102,6 +102,7 @@ def init_db(db_path: Path = DB_PATH):
             season TEXT,
             week INTEGER,
             player_id TEXT,
+            nfl_team TEXT,
             points REAL,
             pass_yd REAL,
             pass_td REAL,
@@ -279,7 +280,8 @@ def load_league_data(
 
         # 4. Weekly NFL Stats with player metadata & ownership (filtered strictly to season)
         nfl_stats = pd.read_sql_query('''
-            SELECT s.season, s.week, s.player_id, p.full_name as player_name, p.position, p.nfl_team,
+            SELECT s.season, s.week, s.player_id, p.full_name as player_name, p.position, 
+                   COALESCE(s.nfl_team, p.nfl_team, 'FA') as nfl_team,
                    p.injury_status, COALESCE(t.team_name, 'Free Agent') as current_owner,
                    s.points, s.pass_yd, s.pass_td, s.pass_int, s.rush_yd, s.rush_td, s.rec, s.rec_yd, s.rec_td
             FROM weekly_nfl_stats s
@@ -299,7 +301,8 @@ def load_league_data(
         ''', conn, params=(league_id,))
 
         nfl_stats = pd.read_sql_query('''
-            SELECT s.season, s.week, s.player_id, p.full_name as player_name, p.position, p.nfl_team,
+            SELECT s.season, s.week, s.player_id, p.full_name as player_name, p.position, 
+                   COALESCE(s.nfl_team, p.nfl_team, 'FA') as nfl_team,
                    p.injury_status, COALESCE(t.team_name, 'Free Agent') as current_owner,
                    s.points, s.pass_yd, s.pass_td, s.pass_int, s.rush_yd, s.rush_td, s.rec, s.rec_yd, s.rec_td
             FROM weekly_nfl_stats s

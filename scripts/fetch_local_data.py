@@ -328,6 +328,18 @@ def main():
         "--example", type=int, choices=range(1, len(EXAMPLE_QUERIES) + 1), help=f"Run one of the pre-built example queries (1-{len(EXAMPLE_QUERIES)})"
     )
     parser.add_argument(
+        "--sync-2024", action="store_true", help="Download and calculate full historical 2024 season stats"
+    )
+    parser.add_argument(
+        "--sync-2025", action="store_true", help="Download and calculate full historical 2025 season stats"
+    )
+    parser.add_argument(
+        "--sync-season", type=str, help="Download and calculate historical season stats for any specific year (e.g. 2024, 2023)"
+    )
+    parser.add_argument(
+        "-t", "--truncate", action="store_true", help="Truncate/delete existing records for the target season (or current season on --sync) before loading fresh data"
+    )
+    parser.add_argument(
         "--examples", action="store_true", help="List all pre-built example SQL queries"
     )
     parser.add_argument(
@@ -348,7 +360,46 @@ def main():
         fetch_from_azure()
 
     if args.sync:
+        if args.truncate:
+            from src.db import get_connection
+            with get_connection(DB_PATH) as conn:
+                c = conn.cursor()
+                c.execute("DELETE FROM weekly_nfl_stats WHERE season = '2026'")
+                c.execute("DELETE FROM matchups WHERE season = '2026'")
+                conn.commit()
+            print("🗑️  Truncated 2026 weekly_nfl_stats and matchups before sync.")
         fetch_from_sleeper(args.league_id, args.mode, args.force_players)
+
+    if args.sync_2024:
+        from src.sync import sync_historical_season_stats
+        print("=" * 60)
+        print(f"📥 Fetching 2024 historical season stats with league scoring rules into: {DB_PATH}")
+        if args.truncate:
+            print("🗑️  Truncate flag active: Existing 2024 records will be wiped before loading.")
+        print("=" * 60)
+        sync_historical_season_stats(season="2024", db_path=DB_PATH, truncate=args.truncate)
+        print("[SUCCESS] Historical 2024 stats successfully updated!")
+
+    if args.sync_2025:
+        from src.sync import sync_historical_season_stats
+        print("=" * 60)
+        print(f"📥 Fetching 2025 historical season stats with league scoring rules into: {DB_PATH}")
+        if args.truncate:
+            print("🗑️  Truncate flag active: Existing 2025 records will be wiped before loading.")
+        print("=" * 60)
+        sync_historical_season_stats(season="2025", db_path=DB_PATH, truncate=args.truncate)
+        print("[SUCCESS] Historical 2025 stats successfully updated!")
+
+    if args.sync_season:
+        from src.sync import sync_historical_season_stats
+        target_s = str(args.sync_season).strip()
+        print("=" * 60)
+        print(f"📥 Fetching {target_s} historical season stats with league scoring rules into: {DB_PATH}")
+        if args.truncate:
+            print(f"🗑️  Truncate flag active: Existing {target_s} records will be wiped before loading.")
+        print("=" * 60)
+        sync_historical_season_stats(season=target_s, db_path=DB_PATH, truncate=args.truncate)
+        print(f"[SUCCESS] Historical {target_s} stats successfully updated!")
 
     if args.info:
         show_database_info()

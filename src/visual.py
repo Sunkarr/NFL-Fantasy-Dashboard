@@ -1,7 +1,18 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 import altair as alt
 import pandas as pd
-from src.config import TEAM_PALETTE, FREE_AGENT_COLOR
+from src.config import TEAM_PALETTE, FREE_AGENT_COLOR, NFL_TEAM_COLORS
+
+# Configure Altair data transformer to inline CSV to prevent virtual file cache misses / 404 KeyErrors in marimo
+try:
+    from marimo._plugins.ui._impl.charts.altair_transformer import register_transformers
+    register_transformers()
+    alt.data_transformers.enable('marimo_inline_csv')
+except Exception:
+    try:
+        alt.data_transformers.enable('default')
+    except Exception:
+        pass
 
 
 def get_owner_color_map(unique_teams: List[str]) -> Dict[str, str]:
@@ -60,8 +71,8 @@ def build_interactive_position_chart(
     y_med = float(df_plot['std_points'].median())
 
     # Legend order and palette mapping
-    ordered_owners = sorted([o for o in df_plot['current_owner'].unique() if o != 'Free Agent'])
-    if 'Free Agent' in df_plot['current_owner'].values:
+    ordered_owners = sorted([o for o in df_plot['current_owner'].unique() if o != 'Free Agent'] if 'current_owner' in df_plot.columns else [])
+    if 'current_owner' in df_plot.columns and 'Free Agent' in df_plot['current_owner'].values:
         ordered_owners.append('Free Agent')
 
     domain_labels = [f"{o} ({owner_counts.get(o, 0)})" for o in ordered_owners]
@@ -152,7 +163,6 @@ def build_interactive_position_chart(
     df_even = df_plot[df_plot['is_even']].copy()
     df_odd = df_plot[~df_plot['is_even']].copy()
 
-    # Even: Right-top offset (+11, -5)
     labels_even = alt.Chart(df_even).mark_text(
         align='left',
         baseline='middle',
@@ -168,7 +178,6 @@ def build_interactive_position_chart(
         text='short_name:N'
     )
 
-    # Odd: Right-bottom offset (+11, +6)
     labels_odd = alt.Chart(df_odd).mark_text(
         align='left',
         baseline='middle',
@@ -195,6 +204,7 @@ def build_interactive_position_chart(
 
     return chart
 
+
 def build_market_value_scatter_chart(
     val_data: pd.DataFrame,
     unique_teams: List[str],
@@ -204,11 +214,6 @@ def build_market_value_scatter_chart(
 ) -> alt.Chart:
     """
     Build an Altair scatter plot mapping Mean FPTS (PPG) vs Market Trade Value (0 - 100 TV).
-    Features:
-    - Smart anti-overlap alternating labels
-    - Detailed hover tooltips (TV, PPG, VORP, GP, Pos Rank, Percentile, Status)
-    - Median reference dashed lines for market quadrants
-    - High-contrast fantasy owner color palette
     """
     if val_data is None or val_data.empty:
         return alt.Chart(pd.DataFrame()).mark_text()
@@ -348,3 +353,212 @@ def build_market_value_scatter_chart(
 
     return chart
 
+
+def build_player_weekly_bar_chart(
+    weekly_df: pd.DataFrame,
+    mean_points: float,
+    player_name: str,
+    position: str = "WR",
+    chart_width: int = 860,
+    chart_height: int = 300,
+) -> alt.Chart:
+    """
+    Build an interactive weekly fantasy points bar chart with NFL team colors,
+    historical 2025 game logs, current 2026 season highlight shading, and a dashed season average rule line.
+    """
+    if weekly_df is None or weekly_df.empty:
+        return alt.Chart(pd.DataFrame()).mark_text()
+
+    df_plot = weekly_df.copy()
+    if 'season' not in df_plot.columns:
+        df_plot['season'] = '2026'
+
+    # Build clear chronological week labels (e.g. '25 W1, '26 W1)
+    if 'week_label' not in df_plot.columns:
+        df_plot['week_label'] = df_plot.apply(
+            lambda r: f"'{str(r['season'])[-2:]} W{r['week']}" if str(r['season']) != '2026' else f"Week {r['week']}",
+            axis=1
+        )
+
+    # Team colors per week: if player switched NFL teams, each week shows their respective team color
+    if 'bar_color' not in df_plot.columns:
+        df_plot['bar_color'] = df_plot['nfl_team'].apply(
+            lambda t: NFL_TEAM_COLORS.get(str(t).upper(), '#00338D')
+        )
+
+    # Relative diff vs current season average
+    df_plot['diff_vs_avg'] = (df_plot['points'] - mean_points).round(1)
+
+    # Reverse chronological order: newest games first on the left (e.g. 2026 W4, W3, W2, W1, '25 W18..., '24 W1)
+    # This ensures users immediately see the most recent games without needing to scroll right.
+    df_plot['chrono_order'] = df_plot['season'].astype(int) * 100 + df_plot['week'].astype(int)
+    df_plot = df_plot.sort_values(by='chrono_order', ascending=False).reset_index(drop=True)
+    x_order = list(df_plot['week_label'])
+
+    # Opacity: Current 2026 season stands out with 1.0 opacity; historical seasons are slightly dimmed (0.75)
+    df_plot['opacity'] = df_plot['season'].apply(lambda s: 1.0 if str(s) == '2026' else 0.75)
+
+    max_pts = float(df_plot['points'].max()) if not df_plot.empty else 20.0
+    y_max = max(max_pts + 5.0, mean_points + 5.0, 15.0)
+
+    n_bars = len(df_plot)
+    bar_size = 22 if n_bars > 15 else (32 if n_bars > 8 else 42)
+
+    base = alt.Chart(df_plot)
+
+    tooltips = [
+        alt.Tooltip('season:N', title='Season'),
+        alt.Tooltip('week:Q', title='NFL Week'),
+        alt.Tooltip('points:Q', title='Fantasy Points', format='.1f'),
+        alt.Tooltip('nfl_team:N', title='NFL Team'),
+        alt.Tooltip('diff_vs_avg:Q', title='vs 2026 Avg', format='+.1f'),
+    ]
+    for col, title in [
+        ('fantasy_status', 'Fantasy Status'),
+        ('pass_yd', 'Pass Yds'),
+        ('pass_td', 'Pass TDs'),
+        ('rush_yd', 'Rush Yds'),
+        ('rush_td', 'Rush TDs'),
+        ('rec', 'Receptions'),
+        ('rec_yd', 'Rec Yds'),
+        ('rec_td', 'Rec TDs')
+    ]:
+        if col in df_plot.columns:
+            tooltips.append(alt.Tooltip(f'{col}:N' if col == 'fantasy_status' else f'{col}:Q', title=title))
+
+    # Dynamic width: at least chart_width (min 920px) or expanded comfortably for multi-season history
+    effective_width = max(chart_width, n_bars * 38)
+
+    bars = base.mark_bar(
+        size=bar_size
+    ).encode(
+        x=alt.X(
+            'week_label:O',
+            sort=x_order,
+            title='Game Week (Newest First on Left ➔ Historical to Right)',
+            axis=alt.Axis(
+                labelAngle=-45 if n_bars > 10 else 0,
+                labelFontSize=9.5 if n_bars > 12 else 11,
+                titleFontSize=12,
+                titleFontWeight='bold'
+            )
+        ),
+        y=alt.Y(
+            'points:Q',
+            title='Fantasy Points (FPTS)',
+            scale=alt.Scale(domain=[0, y_max]),
+            axis=alt.Axis(gridColor='#e2e8f0', labelFontSize=11, titleFontSize=12, titleFontWeight='bold')
+        ),
+        color=alt.Color('bar_color:N', scale=None),
+        opacity=alt.Opacity('opacity:Q', scale=None, legend=None),
+        tooltip=tooltips
+    )
+
+    text = base.mark_text(
+        dy=-8,
+        fontSize=9.5 if n_bars > 12 else 11,
+        fontWeight=700,
+        color='#1e293b'
+    ).encode(
+        x=alt.X('week_label:O', sort=x_order),
+        y=alt.Y('points:Q'),
+        text=alt.Text('points:Q', format='.1f')
+    )
+
+    avg_df = pd.DataFrame({'avg': [mean_points]})
+    rule = alt.Chart(avg_df).mark_rule(
+        strokeDash=[5, 5],
+        color='#ef4444',
+        size=1.8,
+        opacity=0.85
+    ).encode(
+        y='avg:Q',
+        tooltip=[alt.Tooltip('avg:Q', title='2026 Season Average', format='.1f')]
+    )
+
+    # Clean layered chart: text label removed from inside the chart area (now displayed cleanly in header legend only)
+    chart = alt.layer(bars, text, rule).properties(
+        width=effective_width,
+        height=chart_height
+    ).configure_view(
+        stroke='#e2e8f0'
+    ).configure_axis(
+        domainColor='#cbd5e1'
+    )
+
+    return chart
+
+
+def build_player_comparison_chart(
+    df_comp: pd.DataFrame,
+    name_a: str,
+    name_b: str,
+    color_a: str = '#2563eb',
+    color_b: str = '#059669',
+    chart_width: int = 860,
+    chart_height: int = 320,
+) -> alt.Chart:
+    """
+    Build an interactive side-by-side grouped bar chart comparing two players week-by-week.
+    """
+    if df_comp is None or df_comp.empty:
+        return alt.Chart(pd.DataFrame()).mark_text()
+
+    df_plot = df_comp.copy()
+    if 'week_label' not in df_plot.columns:
+        df_plot['week_label'] = df_plot['week'].apply(lambda w: f"Week {w}")
+
+    max_pts = float(df_plot['points'].max()) if not df_plot.empty else 20.0
+    y_max = max(max_pts + 6.0, 15.0)
+
+    base = alt.Chart(df_plot)
+
+    bars = base.mark_bar(
+        size=26
+    ).encode(
+        x=alt.X('week_label:O', title='NFL Game Week', axis=alt.Axis(labelAngle=0, labelFontSize=11, titleFontSize=12, titleFontWeight='bold')),
+        y=alt.Y('points:Q', title='Fantasy Points (FPTS)', scale=alt.Scale(domain=[0, y_max]), axis=alt.Axis(gridColor='#e2e8f0', labelFontSize=11, titleFontSize=12, titleFontWeight='bold')),
+        xOffset='player_name:N',
+        color=alt.Color(
+            'player_name:N',
+            title='Player',
+            scale=alt.Scale(domain=[name_a, name_b], range=[color_a, color_b]),
+            legend=alt.Legend(
+                titleFontSize=11.5,
+                titleFontWeight='bold',
+                labelFontSize=11,
+                symbolSize=100,
+                orient='top'
+            )
+        ),
+        tooltip=[
+            alt.Tooltip('player_name:N', title='Player'),
+            alt.Tooltip('week_label:N', title='Week'),
+            alt.Tooltip('points:Q', title='Points', format='.1f'),
+            alt.Tooltip('position:N', title='Pos'),
+            alt.Tooltip('nfl_team:N', title='NFL Team')
+        ]
+    )
+
+    text = base.mark_text(
+        dy=-8,
+        fontSize=10,
+        fontWeight=700
+    ).encode(
+        x=alt.X('week_label:O'),
+        y=alt.Y('points:Q'),
+        xOffset='player_name:N',
+        text=alt.Text('points:Q', format='.1f'),
+        color=alt.Color('player_name:N', scale=alt.Scale(domain=[name_a, name_b], range=[color_a, color_b]), legend=None)
+    )
+
+    chart = (bars + text).properties(
+        width=chart_width,
+        height=chart_height
+    ).configure_view(
+        stroke='#e2e8f0'
+    ).configure_axis(
+        domainColor='#cbd5e1'
+    )
+
+    return chart

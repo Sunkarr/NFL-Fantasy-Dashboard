@@ -24,6 +24,13 @@ def _():
         get_luck_and_all_play_analytics
     )
     from src.moves import get_roster_move_analytics, render_roster_moves_html
+    from src.players import (
+        get_player_selection_options,
+        get_player_detailed_analytics,
+        get_player_comparison_analytics,
+        render_player_profile_view,
+        render_player_comparison_view,
+    )
     from src.sync import start_background_scheduler
     from src.visual import build_interactive_position_chart, get_owner_color_map
     from src.trades import (
@@ -34,6 +41,14 @@ def _():
         render_trade_finder_view,
         simulate_custom_trade
     )
+
+    import altair as alt
+    try:
+        from marimo._plugins.ui._impl.charts.altair_transformer import register_transformers
+        register_transformers()
+        alt.data_transformers.enable('marimo_inline_csv')
+    except Exception:
+        pass
 
     # Ensure in-process background auto-sync scheduler is running (reliable across local & Docker environments)
     start_background_scheduler(league_id=DEFAULT_LEAGUE_ID)
@@ -110,6 +125,11 @@ def _():
         simulate_custom_trade,
         get_roster_move_analytics,
         render_roster_moves_html,
+        get_player_selection_options,
+        get_player_detailed_analytics,
+        get_player_comparison_analytics,
+        render_player_profile_view,
+        render_player_comparison_view,
     )
 
 
@@ -129,6 +149,7 @@ def _(mo):
     nav_tabs = mo.ui.tabs({
         "🏆 League Overview": mo.md(""),
         "🛡️ Team Analytics": mo.md(""),
+        "👤 Player Stats": mo.md(""),
         "⚡ Team Optimizer": mo.md(""),
         "🍀 Luck & All-Play": mo.md(""),
         "📜 Roster Moves": mo.md(""),
@@ -161,6 +182,7 @@ def _(
     return (
         df_current_rosters,
         df_matchups,
+        df_nfl_stats,
         df_player_stats,
         df_team_matchups,
         df_teams,
@@ -346,6 +368,75 @@ def _(
 
 @app.cell
 def _(mo, unique_teams):
+    # Persistent Player Stats filter controls
+    _t_names = unique_teams if unique_teams else []
+    player_mode_radio = mo.ui.radio(
+        options=["👤 Single Player", "⚔️ Compare Players"],
+        value="👤 Single Player",
+        inline=True,
+        label="Mode:"
+    )
+    player_pos_radio = mo.ui.radio(
+        options=["ALL", "QB", "RB", "WR", "TE", "K", "DEF"],
+        value="ALL",
+        inline=True,
+        label="Position:"
+    )
+    player_owner_dropdown = mo.ui.dropdown(
+        options=["Rostered Only", "ALL", "Free Agents"] + _t_names,
+        value="Rostered Only",
+        label="Owner:"
+    )
+    player_search_input = mo.ui.text(
+        value="",
+        placeholder="Filter by name (e.g. Allen)...",
+        label="Search:"
+    )
+    return (
+        player_mode_radio,
+        player_owner_dropdown,
+        player_pos_radio,
+        player_search_input,
+    )
+
+
+@app.cell
+def _(
+    df_current_rosters,
+    df_player_stats,
+    get_player_selection_options,
+    mo,
+    player_owner_dropdown,
+    player_pos_radio,
+    player_search_input,
+):
+    # Compute available player options based on position, ownership, and search query
+    _opts = get_player_selection_options(
+        df_player_stats=df_player_stats,
+        df_rosters=df_current_rosters,
+        pos_filter=player_pos_radio.value if player_pos_radio is not None else "ALL",
+        owner_filter=player_owner_dropdown.value if player_owner_dropdown is not None else "Rostered Only",
+        search_query=player_search_input.value if player_search_input is not None else "",
+    )
+    _keys = list(_opts.keys())
+    _def_p1 = _keys[0] if _keys else None
+    _def_p2 = _keys[1] if len(_keys) > 1 else _def_p1
+
+    player_1_dropdown = mo.ui.dropdown(
+        options=_opts,
+        value=_def_p1,
+        label="Player 1:"
+    )
+    player_2_dropdown = mo.ui.dropdown(
+        options=_opts,
+        value=_def_p2,
+        label="Player 2 (Compare):"
+    )
+    return player_1_dropdown, player_2_dropdown
+
+
+@app.cell
+def _(mo, unique_teams):
     # Controls for dedicated Player Market & Value page
     _t_names = unique_teams if unique_teams else []
     market_pos_dropdown = mo.ui.dropdown(
@@ -409,6 +500,12 @@ def _(
     opt_injury_switch,
     opt_mode_switch,
     opt_week_dropdown,
+    player_1_dropdown,
+    player_2_dropdown,
+    player_mode_radio,
+    player_owner_dropdown,
+    player_pos_radio,
+    player_search_input,
     pos_select,
     team_dropdown,
     trade_focus_dropdown,
@@ -416,6 +513,17 @@ def _(
     # Filter bar renderer: displays active tab controls without re-instantiating them
     if nav_tabs.value == "📊 Position Scatter":
         _filter_bar = mo.hstack([pos_select, min_pts_slider, limit_slider], justify="start", align="center", gap=2)
+    elif nav_tabs.value == "👤 Player Stats":
+        if player_mode_radio is not None and player_mode_radio.value == "⚔️ Compare Players":
+            _filter_bar = mo.vstack([
+                mo.hstack([player_mode_radio, player_pos_radio, player_owner_dropdown, player_search_input], justify="start", align="center", gap=1.5, wrap=True),
+                mo.hstack([player_1_dropdown, player_2_dropdown], justify="start", align="center", gap=2, wrap=True)
+            ], gap=0.8)
+        else:
+            _filter_bar = mo.vstack([
+                mo.hstack([player_mode_radio, player_pos_radio, player_owner_dropdown, player_search_input], justify="start", align="center", gap=1.5, wrap=True),
+                mo.hstack([player_1_dropdown], justify="start", align="center", gap=2, wrap=True)
+            ], gap=0.8)
     elif nav_tabs.value == "🛡️ Team Analytics":
         _filter_bar = mo.hstack([team_dropdown], justify="start", align="center", gap=2)
     elif nav_tabs.value == "🤝 Trade Finder":
@@ -463,6 +571,7 @@ def _(
     build_interactive_position_chart,
     df_current_rosters,
     df_matchups,
+    df_nfl_stats,
     df_player_stats,
     df_team_matchups,
     df_teams,
@@ -472,6 +581,8 @@ def _(
     get_last_sync_time,
     get_league_overview_analytics,
     get_luck_and_all_play_analytics,
+    get_player_comparison_analytics,
+    get_player_detailed_analytics,
     get_team_roster_analytics,
     limit_slider,
     market_pos_dropdown,
@@ -486,10 +597,15 @@ def _(
     opt_week_dropdown,
     optimize_team_lineup,
     owner_colors,
+    player_1_dropdown,
+    player_2_dropdown,
+    player_mode_radio,
     pos_select,
     refresh_btn,
     render_optimizer_view,
+    render_player_comparison_view,
     render_player_market_view,
+    render_player_profile_view,
     render_trade_finder_view,
     simulate_custom_trade,
     team_dropdown,
@@ -586,6 +702,43 @@ def _(
             mo=mo
         )
         _view = mo.vstack([_market_view, _fixed_corner_badge], gap=1)
+
+    elif nav_tabs.value == "👤 Player Stats":
+        _p1_id = player_1_dropdown.value if player_1_dropdown is not None else None
+        _p2_id = player_2_dropdown.value if player_2_dropdown is not None else None
+        _is_comp = (player_mode_radio is not None and player_mode_radio.value == "⚔️ Compare Players")
+
+        if _is_comp:
+            if not _p1_id or not _p2_id:
+                _content = mo.md("Please select two players above to run head-to-head comparison.")
+            else:
+                _comp_data = get_player_comparison_analytics(
+                    player_a_id=_p1_id,
+                    player_b_id=_p2_id,
+                    df_player_stats=df_player_stats,
+                    df_nfl_stats=df_nfl_stats,
+                    df_matchups=df_matchups,
+                    df_rosters=df_current_rosters,
+                    val_df=val_df_calc,
+                    db_path=DB_PATH
+                )
+                _content = render_player_comparison_view(_comp_data, owner_colors=owner_colors, mo=mo)
+        else:
+            if not _p1_id:
+                _content = mo.md("Please select a player above to inspect detailed analytics.")
+            else:
+                _p_data = get_player_detailed_analytics(
+                    player_id=_p1_id,
+                    df_player_stats=df_player_stats,
+                    df_nfl_stats=df_nfl_stats,
+                    df_matchups=df_matchups,
+                    df_rosters=df_current_rosters,
+                    val_df=val_df_calc,
+                    db_path=DB_PATH
+                )
+                _content = render_player_profile_view(_p_data, owner_colors=owner_colors, mo=mo)
+
+        _view = mo.vstack([_content, _fixed_corner_badge], gap=1)
 
     elif nav_tabs.value == "🛡️ Team Analytics":
         if team_dropdown is None or not team_dropdown.value:
