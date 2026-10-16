@@ -94,8 +94,9 @@ def sync_league_and_rosters(league_id: str = DEFAULT_LEAGUE_ID, db_path: Path = 
     except Exception:
         current_week = int(league_info.get("settings", {}).get("leg", 1))
 
-    # Persist detected season in metadata
+    # Persist detected season and current week in metadata
     set_sync_metadata("active_season", season, db_path=db_path)
+    set_sync_metadata("current_week", str(current_week), db_path=db_path)
 
     u_res = requests.get(f"https://api.sleeper.app/v1/league/{league_id}/users", timeout=10)
     u_res.raise_for_status()
@@ -204,11 +205,18 @@ def sync_weekly_data(
     except Exception:
         existing_team_weeks = set()
 
-    # A week is only considered existing if both player points and team matchups are present
-    existing_weeks = existing_pts_weeks & existing_team_weeks
+    try:
+        cur.execute("SELECT week, COUNT(*) FROM weekly_nfl_stats WHERE season = ? GROUP BY week", (season,))
+        stats_counts = dict(cur.fetchall())
+    except Exception:
+        stats_counts = {}
+
+    # A week is only considered fully existing if matchup points, team scores, and complete stats (> 500) are all present
+    existing_weeks = {w for w in (existing_pts_weeks & existing_team_weeks) if stats_counts.get(w, 0) >= 500}
 
     if mode == "incremental":
         all_possible = set(range(1, max_week + 1))
+        # Always sync current week and any weeks missing full data
         weeks_to_sync = sorted(list((all_possible - existing_weeks) | {max_week}))
     else:
         weeks_to_sync = list(range(1, max_week + 1))
@@ -229,13 +237,16 @@ def sync_weekly_data(
     for w in weeks_to_sync:
         # Matchups
         try:
-            m_res = requests.get(f"https://api.sleeper.app/v1/league/{league_id}/matchups/{w}", timeout=10)
-            if m_res.status_code == 200:
-                matchups = m_res.json()
-                for m in matchups:
+            res_m = requests.get(f"https://api.sleeper.app/v1/league/{league_id}/matchups/{w}", timeout=10)
+            if res_m.status_code == 200:
+                m_data = res_m.json()
+                for m in m_data:
                     rid = m.get("roster_id")
                     mid = m.get("matchup_id")
-                    team_pts = float(m.get("points") or 0.0)
+                    t_pts = float(m.get("points") or 0.0)
+                    custom_pts = m.get("custom_points")
+                    if custom_pts is not None:
+                        t_pts = float(custom_pts)
 
                     if rid is not None and mid is not None:
                         team_matchup_rows.append((
@@ -244,64 +255,56 @@ def sync_weekly_data(
                             w,
                             rid,
                             mid,
-                            team_pts,
+                            t_pts,
                             now
                         ))
 
+                    starters = set(str(p) for p in (m.get("starters") or []))
                     players_pts = m.get("players_points") or {}
-                    starters = set(m.get("starters") or [])
-
                     for pid, pts in players_pts.items():
+                        is_st = 1 if str(pid) in starters else 0
                         matchup_rows.append((
                             league_id,
                             season,
                             w,
                             rid,
                             str(pid),
-                            float(pts) if pts is not None else 0.0,
-                            1 if str(pid) in starters else 0,
+                            float(pts or 0.0),
+                            is_st,
                             now
                         ))
         except Exception as e:
-            print(f"Error fetching matchups for week {w}: {e}")
+            print(f"Warning: could not sync matchups for week {w}: {e}")
 
         # Global NFL Stats
         try:
-            s_res = requests.get(f"https://api.sleeper.app/v1/stats/nfl/regular/{season}/{w}", timeout=15)
-            if s_res.status_code == 200:
-                stats_dict = s_res.json()
-                for pid, st in stats_dict.items():
-                    if scoring_rules:
-                        pts = 0.0
-                        for k, weight in scoring_rules.items():
-                            if k in st:
-                                pts += float(st[k]) * float(weight)
-                        pts = round(pts, 2)
-                    else:
-                        pts = float(st.get("pts_ppr", st.get("pts_half_ppr", st.get("pts_std", 0.0))))
+            res_s = requests.get(f"https://api.sleeper.app/v1/stats/nfl/regular/{season}/{w}", timeout=10)
+            if res_s.status_code == 200:
+                s_data = res_s.json()
+                for pid, stats in s_data.items():
+                    calc_pts = 0.0
+                    for cat, val in stats.items():
+                        if cat in scoring_rules:
+                            calc_pts += float(val) * float(scoring_rules[cat])
 
-                    team = player_teams.get(pid, "FA")
-                    if pid in nfl_def_teams:
-                        team = pid
+                    stat_pts = float(stats.get("pts_ppr") or stats.get("pts_half_ppr") or stats.get("pts_std") or 0.0)
+                    final_pts = calc_pts if calc_pts > 0 else stat_pts
+
+                    p_team = player_teams.get(str(pid), "FA")
+                    if str(pid) in nfl_def_teams:
+                        p_team = str(pid)
 
                     stats_rows.append((
+                        str(pid),
                         season,
                         w,
-                        str(pid),
-                        team,
-                        pts,
-                        float(st.get("pass_yd", 0.0)),
-                        float(st.get("pass_td", 0.0)),
-                        float(st.get("pass_int", 0.0)),
-                        float(st.get("rush_yd", 0.0)),
-                        float(st.get("rush_td", 0.0)),
-                        float(st.get("rec", 0.0)),
-                        float(st.get("rec_yd", 0.0)),
-                        float(st.get("rec_td", 0.0)),
+                        p_team,
+                        final_pts,
+                        json.dumps(stats),
                         now
                     ))
         except Exception as e:
-            print(f"Error fetching stats for week {w}: {e}")
+            print(f"Warning: could not sync NFL stats for week {w}: {e}")
 
     if matchup_rows:
         cur.executemany('''
@@ -312,7 +315,7 @@ def sync_weekly_data(
 
     if team_matchup_rows:
         cur.executemany('''
-            INSERT OR REPLACE INTO weekly_team_matchups
+            INSERT OR REPLACE INTO weekly_team_matchups 
             (league_id, season, week, roster_id, matchup_id, points, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', team_matchup_rows)
@@ -320,36 +323,24 @@ def sync_weekly_data(
     if stats_rows:
         cur.executemany('''
             INSERT OR REPLACE INTO weekly_nfl_stats 
-            (season, week, player_id, nfl_team, points, pass_yd, pass_td, pass_int, rush_yd, rush_td, rec, rec_yd, rec_td, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (player_id, season, week, team, points, stats_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', stats_rows)
 
     conn.commit()
     conn.close()
     return len(matchup_rows), len(stats_rows)
 
-def sync_historical_season_stats(
-    season: str = "2025",
-    max_week: int = 18,
-    league_id: str = DEFAULT_LEAGUE_ID,
-    db_path: Path = DB_PATH,
-    truncate: bool = False
-) -> int:
-    """
-    Fetch full historical regular season player stats (Weeks 1 to max_week) from Sleeper API
-    and calculate fantasy points according to league-specific scoring rules.
-    Accurately maps NFL teams per game using nflverse historical rosters.
-    """
+
+def sync_historical_season_stats(season: str, db_path: Path = DB_PATH) -> int:
+    """Download and persist all 18 regular season weeks of NFL player stats for a past season."""
     conn = get_connection(db_path)
     cur = conn.cursor()
     now = datetime.datetime.now().isoformat()
 
-    if truncate:
-        cur.execute("DELETE FROM weekly_nfl_stats WHERE season = ?", (str(season),))
-        conn.commit()
-        print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Truncated existing weekly_nfl_stats records for season {season}.")
+    cur.execute("SELECT DISTINCT week FROM weekly_nfl_stats WHERE season = ?", (season,))
+    existing_weeks = {row[0] for row in cur.fetchall()}
 
-    # Load league scoring rules
     cur.execute("SELECT value FROM sync_metadata WHERE key = 'league_scoring_settings'")
     m_row = cur.fetchone()
     scoring_rules = json.loads(m_row[0]) if m_row else {}
@@ -358,161 +349,122 @@ def sync_historical_season_stats(
     player_teams = dict(cur.fetchall())
     nfl_def_teams = {'ARI','ATL','BAL','BUF','CAR','CHI','CIN','CLE','DAL','DEN','DET','GB','HOU','IND','JAX','KC','LAC','LAR','LV','MIA','MIN','NE','NO','NYG','NYJ','PHI','PIT','SEA','SF','TB','TEN','WAS'}
 
-    # Load historical roster dataset from nflverse to accurately associate players with their team for that year/week
-    # e.g. Kenneth Walker was SEA in 2024 and 2025, KC in 2026.
-    # Uses .csv.gz to avoid pyarrow Parquet repetition level histogram mismatch errors.
-    week_team_map = {}
-    season_team_map = {}
-    try:
-        roster_cache_file = db_path.parent / f"roster_{season}.csv.gz"
-        if not roster_cache_file.exists():
-            r_url = f"https://github.com/nflverse/nflverse-data/releases/download/rosters/roster_{season}.csv.gz"
-            r_resp = requests.get(r_url, timeout=15)
-            if r_resp.status_code == 200:
-                with open(roster_cache_file, "wb") as f:
-                    f.write(r_resp.content)
-        if roster_cache_file.exists():
-            r_df = pd.read_csv(roster_cache_file, compression='gzip', low_memory=False)
-            clean_r = r_df.dropna(subset=['sleeper_id']).copy()
-            clean_r['sleeper_id'] = clean_r['sleeper_id'].astype(str).str.split('.').str[0]
-            week_team_map = clean_r.set_index(['sleeper_id', 'week'])['team'].to_dict()
-            season_team_map = clean_r.groupby('sleeper_id')['team'].last().to_dict()
-            print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Loaded {len(season_team_map)} historical player team mappings for {season} from nflverse.")
-    except Exception as re:
-        print(f"Note: Could not load historical nflverse roster for {season}: {re}")
+    stats_rows = []
+    weeks_to_sync = [w for w in range(1, 19) if w not in existing_weeks]
 
-    total_rows = 0
-    print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Syncing historical regular season {season} stats...")
+    if not weeks_to_sync:
+        conn.close()
+        return 0
 
-    insert_sql = (
-        "INSERT OR REPLACE INTO weekly_nfl_stats "
-        "(season, week, player_id, nfl_team, points, pass_yd, pass_td, pass_int, rush_yd, rush_td, rec, rec_yd, rec_td, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    )
+    print(f"Syncing historical NFL stats for {season} (weeks {min(weeks_to_sync)}-{max(weeks_to_sync)})...")
 
-    for w in range(1, max_week + 1):
+    for w in weeks_to_sync:
         try:
-            res = requests.get(f"https://api.sleeper.app/v1/stats/nfl/regular/{season}/{w}", timeout=15)
-            if res.status_code != 200:
-                continue
-            stats_dict = res.json()
-            rows = []
-            for pid, st in stats_dict.items():
-                pts = 0.0
-                for k, weight in scoring_rules.items():
-                    if k in st:
-                        pts += float(st[k]) * float(weight)
-                pts = round(pts, 2)
+            res_s = requests.get(f"https://api.sleeper.app/v1/stats/nfl/regular/{season}/{w}", timeout=12)
+            if res_s.status_code == 200:
+                s_data = res_s.json()
+                for pid, stats in s_data.items():
+                    calc_pts = 0.0
+                    for cat, val in stats.items():
+                        if cat in scoring_rules:
+                            calc_pts += float(val) * float(scoring_rules[cat])
 
-                if st.get('gp', 0) > 0 or pts != 0 or st.get('off_snp', 0) > 0:
-                    pid_str = str(pid)
-                    if pid in nfl_def_teams:
-                        team = pid
-                    else:
-                        team = week_team_map.get((pid_str, w)) or season_team_map.get(pid_str) or player_teams.get(pid, 'FA')
+                    stat_pts = float(stats.get("pts_ppr") or stats.get("pts_half_ppr") or stats.get("pts_std") or 0.0)
+                    final_pts = calc_pts if calc_pts > 0 else stat_pts
 
-                    rows.append((
-                        str(season),
+                    p_team = player_teams.get(str(pid), "FA")
+                    if str(pid) in nfl_def_teams:
+                        p_team = str(pid)
+
+                    stats_rows.append((
+                        str(pid),
+                        season,
                         w,
-                        pid_str,
-                        team,
-                        pts,
-                        float(st.get('pass_yd', 0.0)),
-                        float(st.get('pass_td', 0.0)),
-                        float(st.get('pass_int', 0.0)),
-                        float(st.get('rush_yd', 0.0)),
-                        float(st.get('rush_td', 0.0)),
-                        float(st.get('rec', 0.0)),
-                        float(st.get('rec_yd', 0.0)),
-                        float(st.get('rec_td', 0.0)),
+                        p_team,
+                        final_pts,
+                        json.dumps(stats),
                         now
                     ))
-            if rows:
-                cur.executemany(insert_sql, rows)
-                conn.commit()
-                total_rows += len(rows)
         except Exception as e:
-            print(f"Error syncing {season} week {w}: {e}")
+            print(f"Warning: could not sync historical stats for season {season}, week {w}: {e}")
 
+    if stats_rows:
+        cur.executemany('''
+            INSERT OR REPLACE INTO weekly_nfl_stats 
+            (player_id, season, week, team, points, stats_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', stats_rows)
+
+    conn.commit()
     conn.close()
-    print(f"Synced {total_rows} historical player records for season {season}.")
-    return total_rows
-
+    return len(stats_rows)
 
 
 def sync_transactions(
     league_id: str = DEFAULT_LEAGUE_ID,
-    season: Optional[str] = None,
+    season: str = "2026",
     max_week: int = 18,
     db_path: Path = DB_PATH
 ) -> int:
-    """
-    Sync completed league transactions (waivers, free agent pickups, trades) into SQLite.
-    Draft picks are excluded. Pre-season roster moves are tagged with is_preseason=1.
-    """
-    init_db(db_path)
+    """Sync all completed transactions (waivers, free agent adds, trades) across rounds."""
     conn = get_connection(db_path)
     cur = conn.cursor()
-    now_iso = datetime.datetime.now().isoformat()
+    now = datetime.datetime.now().isoformat()
 
     all_rows = []
-    rounds_to_check = range(1, min(max_week + 2, 19))
-
-    for r in rounds_to_check:
+    # Check rounds from 1 to max_week
+    for rnd in range(1, max_week + 1):
         try:
-            res = requests.get(f"https://api.sleeper.app/v1/league/{league_id}/transactions/{r}", timeout=10)
-            if res.status_code != 200:
-                continue
-            txs = res.json()
-            if not txs:
-                continue
+            url = f"https://api.sleeper.app/v1/league/{league_id}/transactions/{rnd}"
+            res = requests.get(url, timeout=10)
+            if res.status_code == 200:
+                tx_list = res.json()
+                for tx in tx_list:
+                    status = tx.get("status")
+                    if status != "complete":
+                        continue
 
-            for t in txs:
-                if t.get("status") != "complete":
-                    continue
-
-                tid = str(t.get("transaction_id"))
-                tx_type = str(t.get("type", "unknown"))
-                created_ms = t.get("created") or 0
-                created_dt = datetime.datetime.fromtimestamp(created_ms / 1000.0) if created_ms else datetime.datetime.now()
-                created_iso = created_dt.isoformat()
-
-                # Determine if pre-season move (round 1 before Sept 9th)
-                is_preseason = 1 if (r == 1 and (created_dt.month < 9 or (created_dt.month == 9 and created_dt.day < 9))) else 0
-
-                roster_ids = json.dumps(t.get("roster_ids") or [])
-                adds = json.dumps(t.get("adds") or {})
-                drops = json.dumps(t.get("drops") or {})
-
-                waiver_bid = 0
-                settings = t.get("settings") or {}
-                if isinstance(settings, dict) and "waiver_bid" in settings:
+                    tx_id = str(tx.get("transaction_id"))
+                    tx_type = tx.get("type")
+                    status_updated = tx.get("status_updated") or tx.get("created")
+                    created_at = tx.get("created") or status_updated
+                    roster_ids = json.dumps(tx.get("roster_ids") or [])
+                    adds = json.dumps(tx.get("adds") or {})
+                    drops = json.dumps(tx.get("drops") or {})
+                    settings = tx.get("settings") or {}
                     waiver_bid = int(settings.get("waiver_bid") or 0)
+                    metadata_json = json.dumps(tx.get("metadata") or {})
 
-                all_rows.append((
-                    tid,
-                    league_id,
-                    str(season or created_dt.year),
-                    r,
-                    is_preseason,
-                    int(created_ms),
-                    created_iso,
-                    tx_type,
-                    "complete",
-                    roster_ids,
-                    adds,
-                    drops,
-                    waiver_bid,
-                    now_iso
-                ))
+                    is_preseason = 0
+                    if created_at and season == "2026":
+                        if created_at < 1788912000000:
+                            is_preseason = 1
+
+                    all_rows.append((
+                        tx_id,
+                        league_id,
+                        season,
+                        rnd,
+                        created_at,
+                        status_updated,
+                        tx_type,
+                        status,
+                        roster_ids,
+                        adds,
+                        drops,
+                        waiver_bid,
+                        metadata_json,
+                        is_preseason,
+                        now
+                    ))
         except Exception as e:
-            print(f"Error fetching transactions for round {r}: {e}")
+            print(f"[Transactions Sync Warning] Round {rnd}: {e}")
 
     if all_rows:
         cur.executemany('''
-            INSERT OR REPLACE INTO roster_moves
-            (transaction_id, league_id, season, round, is_preseason, created_at, created_iso, type, status, roster_ids, adds, drops, waiver_bid, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO roster_moves 
+            (transaction_id, league_id, season, round, created_at, status_updated, type, status, roster_ids, adds, drops, waiver_bid, metadata_json, is_preseason, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', all_rows)
         conn.commit()
 
@@ -533,6 +485,7 @@ def run_full_sync(
         print(f"Synced {p_count} players.")
 
         season, current_week = sync_league_and_rosters(league_id=league_id, db_path=db_path)
+        set_sync_metadata("current_week", str(current_week), db_path=db_path)
         print(f"Synced league & rosters for season {season}, active week {current_week}.")
 
         m_count, s_count = sync_weekly_data(
@@ -646,17 +599,3 @@ def start_background_scheduler(league_id: str = DEFAULT_LEAGUE_ID, db_path: Path
             _scheduler_thread.start()
             return True
         return False
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Sync Sleeper NFL Fantasy data into SQLite.")
-    parser.add_argument("--league-id", default=DEFAULT_LEAGUE_ID, help="Sleeper League ID")
-    parser.add_argument("--mode", choices=["incremental", "full"], default="incremental", help="Sync mode")
-    parser.add_argument("--force-players", action="store_true", help="Force refresh of players database")
-    args = parser.parse_args()
-
-    run_full_sync(
-        league_id=args.league_id,
-        mode=args.mode,
-        force_players=args.force_players
-    )
