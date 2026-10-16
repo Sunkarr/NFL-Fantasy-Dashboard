@@ -15,7 +15,7 @@ A self-hosted, reactive fantasy football analytics suite built with **Marimo**, 
 
 ---
 
-## 🛠 Architecture & Tech Stack
+## 🛠️ Architecture & Tech Stack
 
 ```mermaid
 flowchart TD
@@ -32,7 +32,7 @@ flowchart TD
 
 ---
 
-## 🗄 Database Schema
+## 🗄️ Database Schema
 
 The database is structured to store historical weekly statistics, player information, team standings, and roster snapshots.
 
@@ -125,7 +125,7 @@ To ensure previous seasons do not mix into future seasons:
 1. **Season Partitioning**:
    - `weekly_matchup_points` and `weekly_nfl_stats` store the `season` string (e.g. `'2025'`, `'2026'`).
 2. **Strict Query Isolation**:
-   - [`src/db.py:load_league_data()`](file:///Users/jonas/Documents/GitHub/NFL-Fantasy/src/db.py) automatically queries [`get_active_season()`](file:///Users/jonas/Documents/GitHub/NFL-Fantasy/src/db.py#L90-L105) (or takes an explicit `season` parameter) and filters:
+   - [`src/db.py:load_league_data()`](file:///Users/jonas/Documents/GitHub/NFL-Fantasy-Dashboard/src/db.py) automatically queries [`get_active_season()`](file:///Users/jonas/Documents/GitHub/NFL-Fantasy-Dashboard/src/db.py#L90-L105) (or takes an explicit `season` parameter) and filters:
      ```sql
      WHERE m.league_id = ? AND m.season = ?
      ```
@@ -142,8 +142,8 @@ To ensure previous seasons do not mix into future seasons:
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/Sunkarr/NFL-Fantasy.git
-   cd NFL-Fantasy
+   git clone https://github.com/Sunkarr/NFL-Fantasy-Dashboard.git
+   cd NFL-Fantasy-Dashboard
    ```
 2. **Create your private configuration file**:
    ```bash
@@ -233,8 +233,8 @@ The service automatically keeps data fresh across environments (via Docker cron 
 
 ### 1. Initial Setup on the Pi
 ```bash
-git clone https://github.com/Sunkarr/NFL-Fantasy.git
-cd NFL-Fantasy
+git clone https://github.com/Sunkarr/NFL-Fantasy-Dashboard.git
+cd NFL-Fantasy-Dashboard
 cp .env.example .env
 nano .env  # Add your LEAGUE_ID and TEAM_NAME
 docker compose up -d --build
@@ -249,7 +249,7 @@ git push origin main
 ```
 On the Raspberry Pi:
 ```bash
-cd ~/NFL-Fantasy
+cd ~/NFL-Fantasy-Dashboard
 git pull
 docker compose up -d --build
 ```
