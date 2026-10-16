@@ -450,16 +450,28 @@ def get_roster_move_analytics(
 
             # Determine pending move status:
             # - If move happened for a future week (eff_week > current_league_week): pending
-            # - If move happened in current active week and 0 games have completed: pending (unless finalized)
+            # - In current active week (if not finalized):
+            #     * For swaps/trades (both IN and OUT players exist): BOTH sides must have played >= 1 game!
+            #       If one side has played but the other has not (e.g. Darnold played, Stafford has not),
+            #       grading must wait until both have at least 1 game completed.
+            #     * For pure adds or pure drops: the involved player(s) must have played >= 1 game.
             # - Prior completed weeks (eff_week < current_league_week) are NEVER pending!
             is_pending = False
-            total_gp_involved = sum(p['games_played'] for p in added_players_list) + sum(p['games_played'] for p in dropped_players_list)
+            gp_in = sum(p['games_played'] for p in added_players_list)
+            gp_out = sum(p['games_played'] for p in dropped_players_list)
             if not is_pre:
                 if eff_week > current_league_week:
                     is_pending = True
                 elif eff_week == current_league_week and not is_finalized:
-                    if total_gp_involved == 0:
-                        is_pending = True
+                    if added_players_list and dropped_players_list:
+                        if gp_in < 1 or gp_out < 1:
+                            is_pending = True
+                    elif added_players_list:
+                        if gp_in < 1:
+                            is_pending = True
+                    elif dropped_players_list:
+                        if gp_out < 1:
+                            is_pending = True
 
             # Relative Measure: Net PPG (Avg FPTS per game)
             if category == "Free Add / IR Fill":
@@ -636,7 +648,11 @@ def _generate_verdict(
 
     if is_pending:
         tv_desc = f" (Trade Value Delta: {net_tv:+.1f})" if net_tv != 0 else ""
-        return "⏳", "Pending", "#64748b", f"Pending: Games for Week {eff_week} have not completed yet. Points and PPG will accumulate after games conclude{tv_desc}."
+        if added_names and dropped_names and (pts_in > 0 or pts_out > 0):
+            pending_reason = f"Pending: Awaiting games for all involved players in Week {eff_week} before grading (both sides require min. 1 game played){tv_desc}."
+        else:
+            pending_reason = f"Pending: Games for Week {eff_week} have not completed yet. Points and PPG will accumulate after games conclude{tv_desc}."
+        return "⏳", "Pending", "#64748b", pending_reason
 
     th = q_thresh or {'pos_b': 3.0, 'pos_a': 7.0, 'neg_f': -6.0}
     q_b = th.get('pos_b', 3.0)
