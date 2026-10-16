@@ -149,11 +149,11 @@ def _(mo):
     nav_tabs = mo.ui.tabs({
         "🏆 League Overview": mo.md(""),
         "🛡️ Team Analytics": mo.md(""),
-        "👤 Player Stats": mo.md(""),
         "⚡ Team Optimizer": mo.md(""),
         "🍀 Luck & All-Play": mo.md(""),
         "📜 Roster Moves": mo.md(""),
         "🤝 Trade Finder": mo.md(""),
+        "👤 Player Stats": mo.md(""),
         "💎 Player Market": mo.md(""),
         "📊 Position Scatter": mo.md("")
     })
