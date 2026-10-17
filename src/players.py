@@ -3,6 +3,7 @@ import pandas as pd
 from typing import Dict, Any, Optional, List, Tuple
 import sqlite3
 from pathlib import Path
+from dataclasses import dataclass, asdict
 from src.config import TEAM_PALETTE, FREE_AGENT_COLOR, NFL_TEAM_COLORS, NFL_TEAM_NAMES
 from src.optimizer import get_cached_or_live_projections, get_league_scoring_settings, calculate_projected_points
 
@@ -98,6 +99,108 @@ def get_player_selection_options(
     return options
 
 
+
+@dataclass
+class PlayerProfile:
+    """Typed domain representation of an individual player's statistical profile and metrics."""
+    player_id: str
+    player_name: str
+    position: str
+    nfl_team: str
+    owner_name: str
+    team_name: str
+    headshot_url: str
+    injury_status: str
+    age: Optional[int]
+    years_exp: Optional[int]
+    games_played: int
+    total_active_weeks: int
+    missed_games: int
+    availability_pct: float
+    health_assessment: str
+    health_color: str
+    health_badge_bg: str
+    mean_points: float
+    std_points: float
+    cv: float
+    consistency_tier: str
+    consistency_desc: str
+    floor_points: float
+    ceiling_points: float
+    median_points: float
+    total_points: float
+    pos_rank: int
+    trade_value: float
+    weekly_df: pd.DataFrame
+    best_week: Optional[int]
+    best_pts: Optional[float]
+    worst_week: Optional[int]
+    worst_pts: Optional[float]
+    tot_pass_yd: float
+    tot_pass_td: float
+    tot_pass_int: float
+    tot_rush_yd: float
+    tot_rush_td: float
+    tot_rec: float
+    tot_rec_yd: float
+    tot_rec_td: float
+    baseline: float
+    vorp: float
+    scarcity_weight: float
+    elite_multiplier: float
+    injury_discount: float
+    raw_trade_value: float
+    mean_2025: float
+    gp_2025: int
+    total_2025: float
+    history_by_season: Dict[str, Any]
+    history_summary_str: str
+    proj_beat_count: int
+    proj_total_games: int
+    proj_beat_pct: float
+    proj_net_diff: float
+    proj_avg_diff: float
+    team_color: str
+
+    def __getitem__(self, key: str) -> Any:
+        """Allow backwards-compatible dict-like access."""
+        return getattr(self, key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Allow backwards-compatible dict-like .get() access."""
+        return getattr(self, key, default)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary if needed."""
+        return asdict(self)
+
+
+@dataclass
+class PlayerComparison:
+    """Typed domain representation of head-to-head player comparison."""
+    player_a: PlayerProfile
+    player_b: PlayerProfile
+    h2h_df: pd.DataFrame
+    wins_a: int
+    wins_b: int
+    ties: int
+    metrics_comp: List[Dict[str, Any]]
+    verdict_bullets: List[str]
+    recommendation: str
+    combined_chart_df: pd.DataFrame
+
+    def __getitem__(self, key: str) -> Any:
+        """Allow backwards-compatible dict-like access."""
+        return getattr(self, key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Allow backwards-compatible dict-like .get() access."""
+        return getattr(self, key, default)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary if needed."""
+        return asdict(self)
+
 def get_player_detailed_analytics(
     player_id: str,
     df_player_stats: pd.DataFrame,
@@ -106,13 +209,13 @@ def get_player_detailed_analytics(
     df_rosters: pd.DataFrame,
     val_df: Optional[pd.DataFrame] = None,
     db_path: Optional[str] = None
-) -> Optional[Dict[str, Any]]:
+) -> Optional[PlayerProfile]:
     """
-    Extract comprehensive player analytics:
+    Extract player statistical profile and performance metrics:
     - Metadata (Name, Position, NFL Team, Owner, Headshot, Age, Experience)
-    - Current Health & Durability Score (% games played, active injury status)
-    - Scoring profile (PPG, Std Dev, Consistency Tier, Floor, Ceiling, Median, Total Points)
-    - Market Trade Value (0-100 scale)
+    - Availability & Games Played (% games active, injury status)
+    - Scoring distribution (PPG, Std Dev, Variance Tier, Floor, Ceiling, Median, Total Points)
+    - Market Trade Value (0-100 VORP benchmark)
     - Weekly Game Log with Fantasy Matchup Status (Started / Bench / FA) and Box Scores
     """
     if not player_id:
@@ -403,16 +506,16 @@ def get_player_detailed_analytics(
                 history_by_season[str(s_val)] = {'mean': s_mean, 'gp': s_gp, 'total': round(float(sum(s_pts)), 1)}
                 history_snippets.append(f"{s_val}: <strong>{s_mean:.1f} PPG</strong> ({s_gp} G)")
     history_summary_str = " • ".join(history_snippets)
-    # Consistency Tier
+    # Variance / Volatility Profile (based on standard deviation of weekly scores)
     if std_points < 4.5:
-        consistency_tier = "🟢 Rock Solid"
-        consistency_desc = "Highly predictable scoring week-to-week"
+        consistency_tier = "🟢 Low Variance"
+        consistency_desc = "Consistent weekly output (Std Dev < 4.5 FPTS)"
     elif std_points < 9.0:
-        consistency_tier = "🟡 Moderate"
-        consistency_desc = "Standard fantasy volatility with steady baseline"
+        consistency_tier = "🟡 Moderate Variance"
+        consistency_desc = "Standard scoring spread (Std Dev 4.5–9.0 FPTS)"
     else:
-        consistency_tier = "🔴 Boom / Bust"
-        consistency_desc = "Extreme scoring variance (high ceiling, low floor)"
+        consistency_tier = "🔴 High Variance"
+        consistency_desc = "Wide scoring spread (high ceiling, low floor)"
 
     # Health & Availability Assessment
     total_active_weeks = max(total_active_weeks, games_played)
@@ -420,27 +523,27 @@ def get_player_detailed_analytics(
     missed_games = max(0, total_active_weeks - games_played)
 
     if injury_status in ['IR', 'Out', 'PUP', 'Injured Reserve']:
-        health_assessment = "🚨 Currently Sidelined (Inactive / Injured)"
+        health_assessment = "🚨 Sidelined (Inactive / Injury Status)"
         health_color = "#dc2626"
         health_badge_bg = "#fee2e2"
     elif injury_status in ['Questionable', 'Doubtful', 'Probable']:
-        health_assessment = "⚠️ Active Concern (Injury Risk for Next Matchup)"
+        health_assessment = f"⚠️ Injury Watch ({injury_status})"
         health_color = "#b45309"
         health_badge_bg = "#fef3c7"
     elif missed_games == 0:
-        health_assessment = "🛡️ Ironman (100% Season Availability - High Durability)"
+        health_assessment = f"🛡️ 100% Availability ({games_played}/{total_active_weeks} Active Weeks)"
         health_color = "#16a34a"
         health_badge_bg = "#f0fdf4"
     elif missed_games == 1:
-        health_assessment = f"✅ High Durability (Missed only 1 of {total_active_weeks} weeks)"
+        health_assessment = f"✅ High Availability ({games_played}/{total_active_weeks} Active Weeks)"
         health_color = "#16a34a"
         health_badge_bg = "#f0fdf4"
     elif missed_games == 2:
-        health_assessment = f"⚠️ Moderate Risk (Missed 2 of {total_active_weeks} weeks)"
+        health_assessment = f"⚠️ Moderate Absence ({missed_games} Missed of {total_active_weeks} Weeks)"
         health_color = "#b45309"
         health_badge_bg = "#fef3c7"
     else:
-        health_assessment = f"🚨 High Absence History (Missed {missed_games} of {total_active_weeks} weeks)"
+        health_assessment = f"🚨 Low Availability ({missed_games} Missed of {total_active_weeks} Weeks)"
         health_color = "#dc2626"
         health_badge_bg = "#fee2e2"
 
@@ -503,66 +606,69 @@ def get_player_detailed_analytics(
     tot_rec_yd = float(df_weekly['rec_yd'].sum()) if 'rec_yd' in df_weekly.columns else 0.0
     tot_rec_td = float(df_weekly['rec_td'].sum()) if 'rec_td' in df_weekly.columns else 0.0
 
-    return {
-        'player_id': pid_str,
-        'player_name': player_name,
-        'position': position,
-        'nfl_team': nfl_team,
-        'owner_name': owner_name,
-        'team_name': team_name,
-        'headshot_url': headshot_url,
-        'injury_status': injury_status,
-        'age': p_row.get('age'),
-        'years_exp': p_row.get('years_exp'),
-        'games_played': games_played,
-        'total_active_weeks': total_active_weeks,
-        'missed_games': missed_games,
-        'availability_pct': availability_pct,
-        'health_assessment': health_assessment,
-        'health_color': health_color,
-        'health_badge_bg': health_badge_bg,
-        'mean_points': mean_points,
-        'std_points': std_points,
-        'cv': cv,
-        'consistency_tier': consistency_tier,
-        'consistency_desc': consistency_desc,
-        'floor_points': floor_points,
-        'ceiling_points': ceiling_points,
-        'median_points': median_points,
-        'total_points': total_points,
-        'pos_rank': pos_rank,
-        'trade_value': trade_value,
-        'weekly_df': df_weekly,
-        'best_week': best_week,
-        'best_pts': best_pts,
-        'worst_week': worst_week,
-        'worst_pts': worst_pts,
-        'tot_pass_yd': tot_pass_yd,
-        'tot_pass_td': tot_pass_td,
-        'tot_pass_int': tot_pass_int,
-        'tot_rush_yd': tot_rush_yd,
-        'tot_rush_td': tot_rush_td,
-        'tot_rec': tot_rec,
-        'tot_rec_yd': tot_rec_yd,
-        'tot_rec_td': tot_rec_td,
-        'baseline': baseline,
-        'vorp': vorp,
-        'scarcity_weight': scarcity_weight,
-        'elite_multiplier': elite_multiplier,
-        'injury_discount': injury_discount,
-        'raw_trade_value': raw_trade_value,
-        'mean_2025': mean_2025,
-        'gp_2025': gp_2025,
-        'total_2025': total_2025,
-        'history_by_season': history_by_season,
-        'history_summary_str': history_summary_str,
-        'proj_beat_count': proj_beat_count,
-        'proj_total_games': proj_total_games,
-        'proj_beat_pct': proj_beat_pct,
-        'proj_net_diff': proj_net_diff,
-        'proj_avg_diff': proj_avg_diff,
-        'team_color': NFL_TEAM_COLORS.get(nfl_team.upper(), '#00338D'),
-    }
+    age_val = int(p_row.get('age')) if pd.notna(p_row.get('age')) and p_row.get('age') else None
+    exp_val = int(p_row.get('years_exp')) if pd.notna(p_row.get('years_exp')) and p_row.get('years_exp') is not None else None
+
+    return PlayerProfile(
+        player_id=pid_str,
+        player_name=player_name,
+        position=position,
+        nfl_team=nfl_team,
+        owner_name=owner_name,
+        team_name=team_name,
+        headshot_url=headshot_url,
+        injury_status=injury_status,
+        age=age_val,
+        years_exp=exp_val,
+        games_played=games_played,
+        total_active_weeks=total_active_weeks,
+        missed_games=missed_games,
+        availability_pct=availability_pct,
+        health_assessment=health_assessment,
+        health_color=health_color,
+        health_badge_bg=health_badge_bg,
+        mean_points=mean_points,
+        std_points=std_points,
+        cv=cv,
+        consistency_tier=consistency_tier,
+        consistency_desc=consistency_desc,
+        floor_points=floor_points,
+        ceiling_points=ceiling_points,
+        median_points=median_points,
+        total_points=total_points,
+        pos_rank=pos_rank,
+        trade_value=trade_value,
+        weekly_df=df_weekly,
+        best_week=best_week,
+        best_pts=best_pts,
+        worst_week=worst_week,
+        worst_pts=worst_pts,
+        tot_pass_yd=tot_pass_yd,
+        tot_pass_td=tot_pass_td,
+        tot_pass_int=tot_pass_int,
+        tot_rush_yd=tot_rush_yd,
+        tot_rush_td=tot_rush_td,
+        tot_rec=tot_rec,
+        tot_rec_yd=tot_rec_yd,
+        tot_rec_td=tot_rec_td,
+        baseline=baseline,
+        vorp=vorp,
+        scarcity_weight=scarcity_weight,
+        elite_multiplier=elite_multiplier,
+        injury_discount=injury_discount,
+        raw_trade_value=raw_trade_value,
+        mean_2025=mean_2025,
+        gp_2025=gp_2025,
+        total_2025=total_2025,
+        history_by_season=history_by_season,
+        history_summary_str=history_summary_str,
+        proj_beat_count=proj_beat_count,
+        proj_total_games=proj_total_games,
+        proj_beat_pct=proj_beat_pct,
+        proj_net_diff=proj_net_diff,
+        proj_avg_diff=proj_avg_diff,
+        team_color=NFL_TEAM_COLORS.get(nfl_team.upper(), '#00338D'),
+    )
 
 
 def get_player_comparison_analytics(
@@ -574,12 +680,12 @@ def get_player_comparison_analytics(
     df_rosters: pd.DataFrame,
     val_df: Optional[pd.DataFrame] = None,
     db_path: Optional[str] = None
-) -> Optional[Dict[str, Any]]:
+) -> Optional[PlayerComparison]:
     """
-    Compute head-to-head comparison analytics between two players:
-    - Weekly head-to-head game match record (who won which week)
-    - Side-by-side metric table with highlighted winner
-    - Automated Verdict & Executive Recommendation
+    Compute head-to-head statistical comparison between two players:
+    - Weekly scoring matchup record (head-to-head differential)
+    - Side-by-side metric comparison table with advantage indicators
+    - Deterministic statistical comparison summary
     - Grouped comparison weekly dataframe
     """
     data_a = get_player_detailed_analytics(player_a_id, df_player_stats, df_nfl_stats, df_matchups, df_rosters, val_df, db_path)
@@ -678,28 +784,28 @@ def get_player_comparison_analytics(
     sd_b = data_b['std_points']
     w_sd = 'A' if sd_a < sd_b else ('B' if sd_b < sd_a else 'Tie')
     metrics_comp.append({
-        'metric': 'Volatility / Std Dev (Lower is Safer)',
+        'metric': 'Scoring Variance (Std Dev)',
         'val_a': f"±{sd_a:.2f} FPTS",
         'val_b': f"±{sd_b:.2f} FPTS",
         'winner': w_sd,
         'diff': f"{abs(sd_a - sd_b):.2f} SD"
     })
 
-    # 3. Consistency Tier
+    # 3. Variance Profile
     metrics_comp.append({
-        'metric': 'Consistency Profile',
+        'metric': 'Variance Category',
         'val_a': data_a['consistency_tier'],
         'val_b': data_b['consistency_tier'],
         'winner': w_sd,
         'diff': '—'
     })
 
-    # 4. Availability & Health (higher is better)
+    # 4. Availability & Active Games (higher is better)
     av_a = data_a['availability_pct']
     av_b = data_b['availability_pct']
     w_av = 'A' if av_a > av_b else ('B' if av_b > av_a else 'Tie')
     metrics_comp.append({
-        'metric': 'Season Availability (% Played)',
+        'metric': 'Season Availability (% Active)',
         'val_a': f"{av_a:.1f}% ({data_a['games_played']}/{data_a['total_active_weeks']} Wks)",
         'val_b': f"{av_b:.1f}% ({data_b['games_played']}/{data_b['total_active_weeks']} Wks)",
         'winner': w_av,
@@ -724,7 +830,7 @@ def get_player_comparison_analytics(
     ceil_b = data_b['ceiling_points']
     w_ceil = 'A' if ceil_a > ceil_b else ('B' if ceil_b > ceil_a else 'Tie')
     metrics_comp.append({
-        'metric': 'Weekly Ceiling (Season High)',
+        'metric': 'Peak Score (Season High)',
         'val_a': f"{ceil_a:.1f} FPTS",
         'val_b': f"{ceil_b:.1f} FPTS",
         'winner': w_ceil,
@@ -736,7 +842,7 @@ def get_player_comparison_analytics(
     flr_b = data_b['floor_points']
     w_flr = 'A' if flr_a > flr_b else ('B' if flr_b > flr_a else 'Tie')
     metrics_comp.append({
-        'metric': 'Weekly Floor (Season Low)',
+        'metric': 'Floor Score (Season Low)',
         'val_a': f"{flr_a:.1f} FPTS",
         'val_b': f"{flr_b:.1f} FPTS",
         'winner': w_flr,
@@ -760,7 +866,7 @@ def get_player_comparison_analytics(
     tv_b = data_b['trade_value']
     w_tv = 'A' if tv_a > tv_b else ('B' if tv_b > tv_a else 'Tie')
     metrics_comp.append({
-        'metric': 'Market Trade Value (0-100 TV)',
+        'metric': 'Trade Value (VORP Model)',
         'val_a': f"{tv_a:.1f} TV",
         'val_b': f"{tv_b:.1f} TV",
         'winner': w_tv,
@@ -772,21 +878,21 @@ def get_player_comparison_analytics(
     tot_b = data_b['total_points']
     w_tot = 'A' if tot_a > tot_b else ('B' if tot_b > tot_a else 'Tie')
     metrics_comp.append({
-        'metric': 'Cumulative Fantasy Output',
+        'metric': 'Total Fantasy Points',
         'val_a': f"{tot_a:.1f} FPTS",
         'val_b': f"{tot_b:.1f} FPTS",
         'winner': w_tot,
         'diff': f"+{abs(tot_a - tot_b):.1f}"
     })
 
-    # Automated AI / Analytical Verdict Formulation
+    # Deterministic Metric Comparison & Statistical Summary
     verdict_bullets = []
 
     # Scoring edge
     if abs(ppg_a - ppg_b) >= 2.0:
         higher_scorer = data_a['player_name'] if ppg_a > ppg_b else data_b['player_name']
         diff_ppg = abs(ppg_a - ppg_b)
-        verdict_bullets.append(f"<strong>Scoring Dominance:</strong> {higher_scorer} holds a decisive scoring edge of <strong>+{diff_ppg:.1f} PPG</strong>.")
+        verdict_bullets.append(f"<strong>Scoring Advantage:</strong> {higher_scorer} holds an edge of <strong>+{diff_ppg:.1f} PPG</strong>.")
     elif abs(ppg_a - ppg_b) >= 0.5:
         higher_scorer = data_a['player_name'] if ppg_a > ppg_b else data_b['player_name']
         diff_ppg = abs(ppg_a - ppg_b)
@@ -794,667 +900,71 @@ def get_player_comparison_analytics(
     else:
         verdict_bullets.append("<strong>Scoring Parity:</strong> Both players offer virtually identical average weekly scoring output.")
 
-    # Consistency edge
+    # Consistency / Variance edge
     if abs(sd_a - sd_b) >= 2.5:
         more_consistent = data_a['player_name'] if sd_a < sd_b else data_b['player_name']
         diff_sd = abs(sd_a - sd_b)
-        verdict_bullets.append(f"<strong>Stability Advantage:</strong> {more_consistent} provides much greater week-to-week predictability (±{min(sd_a, sd_b):.1f} vs ±{max(sd_a, sd_b):.1f} SD, a {diff_sd:.1f} point variance advantage).")
+        verdict_bullets.append(f"<strong>Lower Volatility:</strong> {more_consistent} provides more consistent week-to-week scoring (±{min(sd_a, sd_b):.1f} vs ±{max(sd_a, sd_b):.1f} SD, a {diff_sd:.1f} point variance advantage).")
     elif abs(sd_a - sd_b) >= 1.0:
         more_consistent = data_a['player_name'] if sd_a < sd_b else data_b['player_name']
-        verdict_bullets.append(f"<strong>Reliability:</strong> {more_consistent} offers a modestly safer floor with lower scoring deviation.")
+        verdict_bullets.append(f"<strong>Variance Advantage:</strong> {more_consistent} offers lower scoring dispersion week-to-week.")
 
     # Ceiling edge
     if abs(ceil_a - ceil_b) >= 5.0:
         high_upside = data_a['player_name'] if ceil_a > ceil_b else data_b['player_name']
         diff_ceil = abs(ceil_a - ceil_b)
-        verdict_bullets.append(f"<strong>Tournament Upside:</strong> {high_upside} has demonstrated true game-breaking ceiling ({max(ceil_a, ceil_b):.1f} max FPTS vs {min(ceil_a, ceil_b):.1f} FPTS, +{diff_ceil:.1f} peak).")
+        verdict_bullets.append(f"<strong>Peak Upside:</strong> {high_upside} has demonstrated higher peak scoring ({max(ceil_a, ceil_b):.1f} max FPTS vs {min(ceil_a, ceil_b):.1f} FPTS, +{diff_ceil:.1f} peak).")
 
-    # Durability / Health edge
+    # Availability / Health edge
     if av_a != av_b:
         durable = data_a['player_name'] if av_a > av_b else data_b['player_name']
         fragile = data_b['player_name'] if av_a > av_b else data_a['player_name']
-        verdict_bullets.append(f"<strong>Durability & Health:</strong> {durable} ({max(av_a, av_b):.0f}% availability) has proven more reliable than {fragile} ({min(av_a, av_b):.0f}% availability, {abs(data_a['missed_games'] - data_b['missed_games'])} more missed games).")
+        verdict_bullets.append(f"<strong>Availability:</strong> {durable} ({max(av_a, av_b):.0f}% availability) has played more games than {fragile} ({min(av_a, av_b):.0f}% availability, {abs(data_a['missed_games'] - data_b['missed_games'])} fewer missed games).")
     else:
-        verdict_bullets.append(f"<strong>Durability Parity:</strong> Both players have played the exact same number of games ({data_a['games_played']} games, {av_a:.0f}% availability).")
+        verdict_bullets.append(f"<strong>Availability Parity:</strong> Both players have played the exact same number of games ({data_a['games_played']} games, {av_a:.0f}% availability).")
 
-    # Recommendation
+    # Statistical Summary Note
     if ppg_a > ppg_b and sd_a <= sd_b:
-        rec_text = f"Clear Advantage: <strong>{data_a['player_name']}</strong> dominates in both raw scoring (+{abs(ppg_a - ppg_b):.1f} PPG) and consistency. He is the superior asset in starting lineups and trades."
+        rec_text = f"Statistical Edge: <strong>{data_a['player_name']}</strong> leads in both average scoring (+{abs(ppg_a - ppg_b):.1f} PPG) and lower weekly variance."
     elif ppg_b > ppg_a and sd_b <= sd_a:
-        rec_text = f"Clear Advantage: <strong>{data_b['player_name']}</strong> dominates in both raw scoring (+{abs(ppg_a - ppg_b):.1f} PPG) and consistency. He is the superior asset in starting lineups and trades."
+        rec_text = f"Statistical Edge: <strong>{data_b['player_name']}</strong> leads in both average scoring (+{abs(ppg_a - ppg_b):.1f} PPG) and lower weekly variance."
     elif ppg_a > ppg_b:
-        rec_text = f"Risk/Reward Tradeoff: <strong>{data_a['player_name']}</strong> provides higher scoring upside (+{abs(ppg_a - ppg_b):.1f} PPG), while <strong>{data_b['player_name']}</strong> offers greater safety and floor."
+        rec_text = f"Tradeoff: <strong>{data_a['player_name']}</strong> provides higher average scoring (+{abs(ppg_a - ppg_b):.1f} PPG), while <strong>{data_b['player_name']}</strong> offers lower variance and higher floor."
     else:
-        rec_text = f"Risk/Reward Tradeoff: <strong>{data_b['player_name']}</strong> provides higher scoring upside (+{abs(ppg_a - ppg_b):.1f} PPG), while <strong>{data_a['player_name']}</strong> offers greater safety and floor."
+        rec_text = f"Tradeoff: <strong>{data_b['player_name']}</strong> provides higher average scoring (+{abs(ppg_a - ppg_b):.1f} PPG), while <strong>{data_a['player_name']}</strong> offers lower variance and higher floor."
 
-    return {
-        'player_a': data_a,
-        'player_b': data_b,
-        'h2h_df': df_h2h,
-        'wins_a': wins_a,
-        'wins_b': wins_b,
-        'ties': ties,
-        'metrics_comp': metrics_comp,
-        'verdict_bullets': verdict_bullets,
-        'recommendation': rec_text,
-        'combined_chart_df': df_combined_chart
-    }
-
-
-def _build_profile_header_html(data: Dict[str, Any], owner_colors: Optional[Dict[str, str]] = None) -> str:
-    pos_colors = {
-        'QB': '#f43f5e',
-        'RB': '#06b6d4',
-        'WR': '#3b82f6',
-        'TE': '#f59e0b',
-        'K': '#a855f7',
-        'DEF': '#64748b'
-    }
-    pos_color = pos_colors.get(data['position'], '#2563eb')
-    owner_col = (owner_colors or {}).get(data['owner_name'], '#64748b')
-
-    inj = data['injury_status']
-    if inj == 'Healthy':
-        inj_html = "<span style='display:inline-flex; align-items:center; gap:5px; background:#f0fdf4; border:1px solid #bbf7d0; color:#15803d; border-radius:12px; padding:3px 10px; font-weight:700; font-size:0.75rem;'><span style='width:6px; height:6px; border-radius:50%; background:#22c55e;'></span>Active</span>"
-    elif inj in ['Questionable', 'Probable']:
-        inj_html = f"<span style='display:inline-flex; align-items:center; gap:5px; background:#fef3c7; border:1px solid #fde68a; color:#b45309; border-radius:12px; padding:3px 10px; font-weight:700; font-size:0.75rem;'><span style='width:6px; height:6px; border-radius:50%; background:#eab308;'></span>{inj}</span>"
-    else:
-        inj_html = f"<span style='display:inline-flex; align-items:center; gap:5px; background:#fee2e2; border:1px solid #fca5a5; color:#991b1b; border-radius:12px; padding:3px 10px; font-weight:700; font-size:0.75rem;'><span style='width:6px; height:6px; border-radius:50%; background:#ef4444;'></span>{inj}</span>"
-
-    meta_parts = []
-    if pd.notna(data.get('age')) and data['age']:
-        meta_parts.append(f"Age {int(data['age'])}")
-    if pd.notna(data.get('years_exp')) and data['years_exp'] is not None:
-        exp = int(data['years_exp'])
-        meta_parts.append("Rookie" if exp == 0 else f"{exp}y Exp")
-    meta_str = " • ".join(meta_parts) if meta_parts else ""
-
-    return f"""
-    <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:14px; padding:18px 22px; margin-bottom:16px; box-shadow:0 1px 4px rgba(0,0,0,0.03); font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px;'>
-        <div style='display:flex; align-items:center; gap:18px;'>
-            <img src='{data['headshot_url']}' style='width:68px; height:68px; border-radius:50%; object-fit:cover; background:#f1f5f9; border:2.5px solid {pos_color}; box-shadow:0 2px 8px rgba(0,0,0,0.08);' onerror="this.src='https://sleepercdn.com/images/v2/icons/player_default.webp'" />
-            <div>
-                <div style='display:flex; align-items:center; gap:8px; flex-wrap:wrap;'>
-                    <span style='font-size:1.45rem; font-weight:800; color:#0f172a;'>{data['player_name']}</span>
-                    <span style='background:{pos_color}; color:#ffffff; font-weight:800; font-size:0.75rem; border-radius:6px; padding:3px 9px;'>{data['position']}</span>
-                    <span style='background:#f1f5f9; color:#475569; font-weight:700; font-size:0.75rem; border-radius:6px; padding:3px 9px; border:1px solid #e2e8f0;'>{data['nfl_team']}</span>
-                    {inj_html}
-                </div>
-                <div style='display:flex; align-items:center; gap:10px; margin-top:5px; font-size:0.8rem; color:#64748b;'>
-                    <span style='display:inline-flex; align-items:center; gap:5px;'>
-                        <span style='width:8px; height:8px; border-radius:50%; background:{owner_col};'></span>
-                        <strong style='color:#334155;'>Owner:</strong> {data['owner_name']}
-                    </span>
-                    {f"<span>•</span><span>{meta_str}</span>" if meta_str else ""}
-                    <span>•</span>
-                    <span>Position Rank: <strong style='color:#1d4ed8;'>#{data['pos_rank']} {data['position']}</strong></span>
-                </div>
-            </div>
-        </div>
-        <div style='display:flex; align-items:center; gap:12px; flex-wrap:wrap;'>
-            <!-- Trade Value Calculation Breakdown -->
-            <div style='background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:6px 12px; display:flex; align-items:center; gap:8px;'>
-                <div style='text-align:center;'>
-                    <div style='font-size:0.62rem; font-weight:700; color:#64748b; text-transform:uppercase;'>PPG (Score)</div>
-                    <div style='font-size:0.95rem; font-weight:800; color:#0f172a;'>{data['mean_points']:.1f}</div>
-                </div>
-                <div style='color:#cbd5e1; font-weight:700; font-size:0.85rem;'>-</div>
-                <div style='text-align:center;'>
-                    <div style='font-size:0.62rem; font-weight:700; color:#64748b; text-transform:uppercase;'>Baseline</div>
-                    <div style='font-size:0.95rem; font-weight:800; color:#64748b;'>{data.get('baseline', 8.0):.1f}</div>
-                </div>
-                <div style='color:#cbd5e1; font-weight:700; font-size:0.85rem;'>➔</div>
-                <div style='text-align:center;'>
-                    <div style='font-size:0.62rem; font-weight:700; color:#059669; text-transform:uppercase;'>VORP</div>
-                    <div style='font-size:0.95rem; font-weight:800; color:#059669;'>+{data.get('vorp', 0.0):.1f}</div>
-                </div>
-                <div style='color:#cbd5e1; font-weight:700; font-size:0.85rem;'>×</div>
-                <div style='text-align:center;'>
-                    <div style='font-size:0.62rem; font-weight:700; color:#64748b; text-transform:uppercase;'>Scarcity</div>
-                    <div style='font-size:0.95rem; font-weight:800; color:#0f172a;'>{data.get('scarcity_weight', 1.0):.2f}x</div>
-                </div>
-                <div style='color:#cbd5e1; font-weight:700; font-size:0.85rem;'>×</div>
-                <div style='text-align:center;'>
-                    <div style='font-size:0.62rem; font-weight:700; color:#7c3aed; text-transform:uppercase;'>Tier Multi</div>
-                    <div style='font-size:0.95rem; font-weight:800; color:#7c3aed;'>{data.get('elite_multiplier', 1.0):.2f}x</div>
-                </div>
-                {f"<div style='color:#cbd5e1; font-weight:700; font-size:0.85rem;'>×</div><div style='text-align:center;'><div style='font-size:0.62rem; font-weight:700; color:#dc2626; text-transform:uppercase;'>Health</div><div style='font-size:0.95rem; font-weight:800; color:#dc2626;'>{data['injury_discount']:.2f}x</div></div>" if data.get('injury_discount', 1.0) < 1.0 else ""}
-            </div>
-
-            <!-- TV Badge -->
-            <div style='background:#faf5ff; border:1px solid #e9d5ff; border-radius:10px; padding:8px 16px; text-align:right;'>
-                <div style='font-size:0.68rem; color:#7c3aed; font-weight:700; text-transform:uppercase;'>Trade Value</div>
-                <div style='font-size:1.35rem; font-weight:900; color:#6b21a8;'>{data['trade_value']:.1f} <span style='font-size:0.75rem; color:#a855f7; font-weight:600;'>TV</span></div>
-            </div>
-        </div>
-        <div style='width:100%;'>
-            <details style='font-size:0.78rem; color:#475569; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:8px 12px; cursor:pointer;'>
-                <summary style='font-weight:700; color:#4f46e5; user-select:none;'>💡 Trade Value (TV) Formula & Calculation Breakdown (Click to expand)</summary>
-                <div style='margin-top:8px; line-height:1.55; display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px; padding-top:6px; border-top:1px solid #e2e8f0;'>
-                    <div>
-                        <strong style='color:#0f172a;'>1. Baseline ({data.get('baseline', 8.0):.1f} FPTS):</strong><br/>
-                        Waiver replacement baseline for {data['position']}. The scoring level freely available without trading.
-                    </div>
-                    <div>
-                        <strong style='color:#059669;'>2. VORP (+{data.get('vorp', 0.0):.1f}):</strong><br/>
-                        <em>Value Over Replacement</em> = PPG ({data['mean_points']:.1f}) - Baseline ({data.get('baseline', 8.0):.1f}). Real points gained over a waiver replacement.
-                    </div>
-                    <div>
-                        <strong style='color:#0f172a;'>3. Scarcity ({data.get('scarcity_weight', 1.0):.2f}×):</strong><br/>
-                        Positional scarcity factor. Premium RBs and WRs are much scarcer in fantasy drafts/trades than QBs and TEs.
-                    </div>
-                    <div>
-                        <strong style='color:#7c3aed;'>4. Tier Multi ({data.get('elite_multiplier', 1.0):.2f}×):</strong><br/>
-                        Superstar premium. Elite top-tier players single-handedly decide weekly fantasy matchups.
-                    </div>
-                </div>
-                <div style='margin-top:8px; font-size:0.76rem; color:#334155; background:#eff6ff; padding:5px 10px; border-radius:6px; border-left:3px solid #3b82f6;'>
-                    <strong>Calculation:</strong> {data['mean_points']:.1f} PPG - {data.get('baseline', 8.0):.1f} Base = +{data.get('vorp', 0.0):.1f} VORP × {data.get('scarcity_weight', 1.0):.2f} (Scarcity) × {data.get('elite_multiplier', 1.0):.2f} (Tier Multi) {f"× {data.get('injury_discount'):.2f} (Availability)" if data.get('injury_discount', 1.0) < 0.99 else ""} ➔ <strong>{data['trade_value']:.1f} Trade Value (0-100 Benchmark)</strong>
-                </div>
-            </details>
-        </div>
-    </div>
-    """
-
-
-def _build_profile_kpi_html(data: Dict[str, Any]) -> str:
-    if data.get('proj_total_games', 0) > 0:
-        pct = data['proj_beat_pct']
-        if pct >= 60.0:
-            hit_color = "#16a34a"
-        elif pct >= 40.0:
-            hit_color = "#d97706"
-        else:
-            hit_color = "#dc2626"
-        net = data['proj_net_diff']
-        avg_d = data['proj_avg_diff']
-        sign_net = "+" if net > 0 else ""
-        sign_avg = "+" if avg_d > 0 else ""
-        proj_kpi_card = f"""
-        <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:12px; padding:14px 16px; box-shadow:0 1px 3px rgba(0,0,0,0.02);'>
-            <div style='font-size:0.75rem; font-weight:600; color:#64748b; text-transform:uppercase;'>🎯 vs Projection</div>
-            <div style='font-size:1.45rem; font-weight:800; color:{hit_color}; margin:3px 0 1px 0;'>{pct:.0f}% <span style='font-size:0.8rem; font-weight:600; color:#64748b;'>({data['proj_beat_count']}/{data['proj_total_games']} Beat)</span></div>
-            <div style='font-size:0.74rem; color:{hit_color}; font-weight:700;'>{sign_net}{net:.1f} Net ({sign_avg}{avg_d:.1f}/G)</div>
-        </div>
-        """
-    else:
-        proj_kpi_card = """
-        <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:12px; padding:14px 16px; box-shadow:0 1px 3px rgba(0,0,0,0.02);'>
-            <div style='font-size:0.75rem; font-weight:600; color:#64748b; text-transform:uppercase;'>🎯 vs Projection</div>
-            <div style='font-size:1.35rem; font-weight:800; color:#94a3b8; margin:3px 0 1px 0;'>—</div>
-            <div style='font-size:0.74rem; color:#64748b;'>No Active Projections</div>
-        </div>
-        """
-
-    return f"""
-    <div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-bottom:16px; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;'>
-        <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:12px; padding:14px 16px; box-shadow:0 1px 3px rgba(0,0,0,0.02);'>
-            <div style='font-size:0.75rem; font-weight:600; color:#64748b; text-transform:uppercase;'>⚡ Season PPG</div>
-            <div style='font-size:1.45rem; font-weight:800; color:#0f172a; margin:3px 0 1px 0;'>{data['mean_points']:.2f} <span style='font-size:0.8rem; font-weight:600; color:#64748b;'>FPTS</span></div>
-            <div style='font-size:0.74rem; color:#1d4ed8; font-weight:700;'>#{data['pos_rank']} at {data['position']}</div>
-        </div>
-
-        <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:12px; padding:14px 16px; box-shadow:0 1px 3px rgba(0,0,0,0.02);'>
-            <div style='font-size:0.75rem; font-weight:600; color:#64748b; text-transform:uppercase;'>🎯 Consistency</div>
-            <div style='font-size:1.25rem; font-weight:800; color:#0f172a; margin:3px 0 1px 0;'>{data['consistency_tier']}</div>
-            <div style='font-size:0.74rem; color:#64748b;'>Std Dev: <strong>±{data['std_points']:.1f} FPTS</strong></div>
-        </div>
-
-        {proj_kpi_card}
-
-        <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:12px; padding:14px 16px; box-shadow:0 1px 3px rgba(0,0,0,0.02);'>
-            <div style='font-size:0.75rem; font-weight:600; color:#64748b; text-transform:uppercase;'>🩺 Health & Availability</div>
-            <div style='font-size:1.45rem; font-weight:800; color:{data['health_color']}; margin:3px 0 1px 0;'>{data['availability_pct']:.0f}% <span style='font-size:0.8rem; font-weight:600; color:#94a3b8;'>({data['games_played']}/{data['total_active_weeks']} G)</span></div>
-            <div style='font-size:0.72rem; color:{data['health_color']}; font-weight:600;'>{data['health_assessment']}</div>
-        </div>
-
-        <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:12px; padding:14px 16px; box-shadow:0 1px 3px rgba(0,0,0,0.02);'>
-            <div style='font-size:0.75rem; font-weight:600; color:#64748b; text-transform:uppercase;'>📈 Floor & Ceiling</div>
-            <div style='font-size:1.2rem; font-weight:800; color:#0f172a; margin:3px 0 1px 0;'><span style='color:#dc2626;'>{data['floor_points']:.1f}</span> — <span style='color:#16a34a;'>{data['ceiling_points']:.1f}</span></div>
-            <div style='font-size:0.74rem; color:#64748b;'>Median: <strong>{data['median_points']:.1f} FPTS</strong></div>
-        </div>
-
-        <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:12px; padding:14px 16px; box-shadow:0 1px 3px rgba(0,0,0,0.02);'>
-            <div style='font-size:0.75rem; font-weight:600; color:#64748b; text-transform:uppercase;'>🏆 Cumulative Output</div>
-            <div style='font-size:1.45rem; font-weight:800; color:#0f172a; margin:3px 0 1px 0;'>{data['total_points']:.1f} <span style='font-size:0.8rem; font-weight:600; color:#64748b;'>FPTS</span></div>
-            <div style='font-size:0.74rem; color:#64748b;'>Peak: <strong>{data['ceiling_points']:.1f}</strong> (Wk {data['best_week'] or 1})</div>
-            {f"<div style='font-size:0.72rem; color:#475569; margin-top:3px; padding-top:3px; border-top:1px dashed #e2e8f0;'>History: {data['history_summary_str']}</div>" if data.get('history_summary_str') else ""}
-        </div>
-
-    </div>
-    """
-
-
-def _build_chart_header_html(data: Dict[str, Any]) -> str:
-    df_w = data.get('weekly_df', pd.DataFrame())
-    unique_teams = []
-    if not df_w.empty and 'nfl_team' in df_w.columns:
-        for t in df_w.sort_values(by=['season', 'week'], ascending=[False, False])['nfl_team'].dropna().unique():
-            t_clean = resolve_nfl_team(t, fallback="")
-            if t_clean and t_clean not in ('FA', '') and t_clean not in unique_teams:
-                unique_teams.append(t_clean)
-
-    curr_team = resolve_nfl_team(data.get('nfl_team'), fallback="")
-    if curr_team and curr_team not in ('FA', '') and curr_team not in unique_teams:
-        unique_teams.insert(0, curr_team)
-
-    if not unique_teams and curr_team:
-        unique_teams = [curr_team]
-
-    curr_t_col = NFL_TEAM_COLORS.get(curr_team.upper(), '#00338D')
-    is_dark_team = False
-    try:
-        if curr_t_col and curr_t_col.startswith('#') and len(curr_t_col) >= 7:
-            r = int(curr_t_col[1:3], 16)
-            g = int(curr_t_col[3:5], 16)
-            b = int(curr_t_col[5:7], 16)
-            is_dark_team = (0.299 * r + 0.587 * g + 0.114 * b) < 50.0
-    except Exception:
-        pass
-    needle_bg = '#94a3b8' if is_dark_team else '#000000'
-
-    team_badges = [
-        f"<span style='display:inline-flex; align-items:center; gap:5px; font-size:0.75rem; color:#0f172a; font-weight:700;'><span style='display:inline-block; width:3px; height:12px; background:{needle_bg}; border-radius:1px;'></span> Proj Target</span>"
-    ]
-    for t_code in unique_teams:
-        t_col = NFL_TEAM_COLORS.get(t_code, '#00338D')
-        t_full = NFL_TEAM_NAMES.get(t_code, t_code)
-        team_badges.append(
-            f"<span style='display:inline-flex; align-items:center; gap:5px; font-size:0.75rem; color:#475569; font-weight:600;'><span style='display:inline-block; width:10px; height:10px; background:{t_col}; border-radius:2px;'></span> {t_full}</span>"
-        )
-    team_badges_html = " ".join(team_badges)
-
-    return f"""
-    <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:14px 14px 0 0; padding:12px 18px; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;'>
-        <div style='display:flex; align-items:center; gap:12px; flex-wrap:wrap;'>
-            <span style='font-weight:800; font-size:0.96rem; color:#0f172a;'>📊 Weekly Game Logs & Multi-Season History</span>
-            <span style='display:inline-flex; align-items:center; gap:5px; font-size:0.75rem; color:#dc2626; font-weight:700;'><span style='display:inline-block; width:14px; height:2px; background:#dc2626; border-top:2px dashed #dc2626;'></span> 2026 Avg: {data['mean_points']:.1f} FPTS</span>
-            {team_badges_html}
-        </div>
-        <div style='font-size:0.74rem; color:#64748b;'>↔ Horizontally scrollable • Newest games first • Hover bars for box-score details</div>
-    </div>
-    """
-
-
-def _build_profile_log_table_html(data: Dict[str, Any]) -> str:
-    df_w = data['weekly_df']
-    game_rows = []
-    if not df_w.empty:
-        # Sort chronologically reverse: 2026 latest first, then 2025
-        df_sorted = df_w.sort_values(by=['season', 'week'], ascending=[False, False]) if 'season' in df_w.columns else df_w.sort_values(by='week', ascending=False)
-        for _, wr in df_sorted.iterrows():
-            w_pts = float(wr['points'])
-            s_val = str(wr.get('season', '2026'))
-            p_proj = float(wr.get('projected_points', 0.0))
-
-            if s_val == '2026' and p_proj > 0:
-                proj_str = f"{p_proj:.1f}"
-                diff_proj = round(w_pts - p_proj, 1)
-                if diff_proj > 0:
-                    diff_html = f"<span style='background:#f0fdf4; border:1px solid #bbf7d0; color:#15803d; border-radius:5px; padding:2px 7px; font-weight:700; font-size:0.78rem;'>+{diff_proj:.1f}</span>"
-                elif diff_proj < 0:
-                    diff_html = f"<span style='background:#fef2f2; border:1px solid #fecaca; color:#dc2626; border-radius:5px; padding:2px 7px; font-weight:700; font-size:0.78rem;'>{diff_proj:.1f}</span>"
-                else:
-                    diff_html = "<span style='background:#f8fafc; border:1px solid #e2e8f0; color:#64748b; border-radius:5px; padding:2px 7px; font-size:0.78rem;'>0.0</span>"
-            else:
-                proj_str = "—"
-                diff_html = "<span style='color:#94a3b8; font-size:0.8rem;'>—</span>"
-
-            s_badge = f"<span style='background:#eff6ff; color:#1d4ed8; font-weight:800; font-size:0.72rem; border-radius:4px; padding:2px 6px; border:1px solid #bfdbfe;'>2026</span>" if s_val == '2026' else f"<span style='background:#f1f5f9; color:#64748b; font-weight:700; font-size:0.72rem; border-radius:4px; padding:2px 6px;'>{s_val}</span>"
-
-            team_val = resolve_nfl_team(wr.get('nfl_team'), fallback=data.get('nfl_team', 'FA'))
-            t_color = NFL_TEAM_COLORS.get(team_val.upper(), '#00338D')
-            team_badge = f"<span style='background:{t_color}18; color:{t_color}; border:1px solid {t_color}40; font-weight:800; font-size:0.72rem; border-radius:4px; padding:2px 6px;'>{team_val}</span>"
-
-            f_stat = str(wr.get('fantasy_status', '—'))
-            if f_stat == 'Started':
-                f_stat_html = "<span style='background:#f0fdf4; border:1px solid #bbf7d0; color:#15803d; border-radius:6px; padding:2px 7px; font-weight:700; font-size:0.72rem;'>Started</span>"
-            elif f_stat == 'Bench':
-                f_stat_html = "<span style='background:#f8fafc; border:1px solid #e2e8f0; color:#64748b; border-radius:6px; padding:2px 7px; font-weight:600; font-size:0.72rem;'>Bench</span>"
-            elif 'Season' in f_stat:
-                f_stat_html = "<span style='color:#94a3b8; font-size:0.74rem;'>Historical</span>"
-            else:
-                f_stat_html = f"<span style='color:#94a3b8; font-size:0.75rem;'>{f_stat}</span>"
-
-            stats_snippets = []
-            if wr.get('pass_yd', 0) > 0 or wr.get('pass_td', 0) > 0:
-                stats_snippets.append(f"{int(wr['pass_yd'])} Yds, {int(wr['pass_td'])} TD" + (f", {int(wr['pass_int'])} INT" if wr.get('pass_int', 0) > 0 else ""))
-            if wr.get('rush_yd', 0) > 0 or wr.get('rush_td', 0) > 0:
-                stats_snippets.append(f"{int(wr['rush_yd'])} Rush Yds, {int(wr['rush_td'])} TD")
-            if wr.get('rec', 0) > 0 or wr.get('rec_yd', 0) > 0:
-                stats_snippets.append(f"{int(wr['rec'])} Rec, {int(wr['rec_yd'])} Yds" + (f", {int(wr['rec_td'])} TD" if wr.get('rec_td', 0) > 0 else ""))
-            stats_desc = " • ".join(stats_snippets) if stats_snippets else "—"
-
-            game_rows.append(f"""
-            <tr style='border-bottom:1px solid #f1f5f9; height:44px; {"background:#fafcff;" if s_val == "2026" else ""}'>
-                <td style='padding:8px 14px; font-weight:700; color:#0f172a; white-space:nowrap;'>{s_badge} <span style='margin-left:4px;'>Week {int(wr['week'])}</span></td>
-                <td style='padding:8px 14px; text-align:center;'>{team_badge}</td>
-                <td style='padding:8px 14px; text-align:right; font-weight:800; font-size:0.95rem; color:#0f172a;'>{w_pts:.1f}</td>
-                <td style='padding:8px 14px; text-align:right; font-weight:600; color:#475569;'>{proj_str}</td>
-                <td style='padding:8px 14px; text-align:center;'>{diff_html}</td>
-                <td style='padding:8px 14px; text-align:center;'>{f_stat_html}</td>
-                <td style='padding:8px 14px; color:#475569; font-size:0.8rem;'>{stats_desc}</td>
-            </tr>
-            """)
-
-    return f"""
-    <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:14px; overflow:hidden; margin-top:16px; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; box-shadow:0 1px 4px rgba(0,0,0,0.03);'>
-        <div style='background:#f8fafc; padding:12px 18px; font-weight:700; font-size:0.92rem; color:#0f172a; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;'>
-            <span>📜 Game Log</span>
-            <span style='font-size:0.75rem; color:#64748b; font-weight:500;'>{len(game_rows)} Total Games Recorded</span>
-        </div>
-        <div style='overflow-x:auto;'>
-            <table style='width:100%; border-collapse:collapse; font-size:0.84rem;'>
-                <thead>
-                    <tr style='background:#fafbfc; border-bottom:1px solid #e2e8f0; color:#64748b; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px;'>
-                        <th style='padding:10px 14px; text-align:left; width:130px;'>Season / Week</th>
-                        <th style='padding:10px 14px; text-align:center; width:80px;'>NFL Team</th>
-                        <th style='padding:10px 14px; text-align:right; width:95px;'>Actual FPTS</th>
-                        <th style='padding:10px 14px; text-align:right; width:85px;'>Projected</th>
-                        <th style='padding:10px 14px; text-align:center; width:95px;'>vs Proj</th>
-                        <th style='padding:10px 14px; text-align:center; width:90px;'>Lineup Slot</th>
-                        <th style='padding:10px 14px; text-align:left;'>Key Box Score Stats</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {''.join(game_rows) if game_rows else "<tr><td colspan='7' style='padding:16px; text-align:center; color:#94a3b8;'>No weekly box score logs recorded yet.</td></tr>"}
-                </tbody>
-            </table>
-        </div>
-    </div>
-    """
-
-
-def render_player_profile_view(
-    data: Dict[str, Any],
-    owner_colors: Optional[Dict[str, str]] = None,
-    mo: Any = None
-) -> Any:
-    """
-    Produce clean Marimo-native rendered view for a single player profile.
-    Combines reactive KPI cards, Altair weekly chart, and box score game log table.
-    """
-    if mo is None:
-        import marimo as mo
-
-    if not data:
-        return mo.md("Please select a player to view stats.")
-
-    from src.visual import build_player_weekly_bar_chart
-    chart = build_player_weekly_bar_chart(
-        weekly_df=data['weekly_df'],
-        mean_points=data['mean_points'],
-        player_name=data['player_name'],
-        position=data['position'],
-        chart_width=860,
-        chart_height=300
+    return PlayerComparison(
+        player_a=data_a,
+        player_b=data_b,
+        h2h_df=df_h2h,
+        wins_a=wins_a,
+        wins_b=wins_b,
+        ties=ties,
+        metrics_comp=metrics_comp,
+        verdict_bullets=verdict_bullets,
+        recommendation=rec_text,
+        combined_chart_df=df_combined_chart
     )
 
-    header_html = _build_profile_header_html(data, owner_colors)
-    kpi_html = _build_profile_kpi_html(data)
-    chart_header = _build_chart_header_html(data)
-    log_html = _build_profile_log_table_html(data)
 
-    chart_widget = mo.ui.altair_chart(chart).style({
-        'overflow-x': 'auto',
-        'width': '100%',
-        'background': '#ffffff',
-        'border-radius': '12px',
-        'padding': '6px 0'
-    })
+# ==============================================================================
+# PRESENTATION & VIEW LAYER EXPORTS (Separation of Concerns)
+# ==============================================================================
+from src.views_players import (
+    render_player_profile_view,
+    render_player_comparison_view,
+    _build_profile_header_html,
+    _build_profile_kpi_html,
+    _build_chart_header_html,
+    _build_profile_log_table_html,
+    _build_comp_headers_html,
+    _build_comp_banner_html,
+    _build_comp_verdict_html,
+    _build_comp_tape_html,
+    _build_comp_chart_header,
+    _build_comp_h2h_table,
+)
 
-    return mo.vstack([
-        mo.Html(header_html),
-        mo.Html(kpi_html),
-        mo.Html(chart_header),
-        chart_widget,
-        mo.Html(log_html)
-    ], gap=1)
-
-
-def _build_comp_headers_html(comp_data: Dict[str, Any], owner_colors: Optional[Dict[str, str]] = None) -> str:
-    p_a = comp_data['player_a']
-    p_b = comp_data['player_b']
-
-    pos_colors = {
-        'QB': '#f43f5e',
-        'RB': '#06b6d4',
-        'WR': '#3b82f6',
-        'TE': '#f59e0b',
-        'K': '#a855f7',
-        'DEF': '#64748b'
-    }
-
-    def make_player_header(p, col_theme, is_a=True):
-        pos_col = pos_colors.get(p['position'], '#2563eb')
-        inj = p['injury_status']
-        if inj == 'Healthy':
-            inj_b = "<span style='color:#16a34a; font-weight:700; font-size:0.75rem;'>● Active</span>"
-        else:
-            inj_b = f"<span style='color:#dc2626; font-weight:700; font-size:0.75rem;'>● {inj}</span>"
-
-        return f"""
-        <div style='background:#ffffff; border:2px solid {col_theme}; border-radius:14px; padding:16px 20px; box-shadow:0 2px 8px rgba(0,0,0,0.04); flex:1; min-width:280px; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;'>
-            <div style='display:flex; align-items:center; gap:16px;'>
-                <img src='{p['headshot_url']}' style='width:64px; height:64px; border-radius:50%; object-fit:cover; background:#f8fafc; border:2.5px solid {col_theme};' onerror="this.src='https://sleepercdn.com/images/v2/icons/player_default.webp'" />
-                <div style='flex:1;'>
-                    <div style='font-size:0.72rem; font-weight:700; color:{col_theme}; text-transform:uppercase;'>Player {'A' if is_a else 'B'}</div>
-                    <div style='font-size:1.3rem; font-weight:800; color:#0f172a; line-height:1.2;'>{p['player_name']}</div>
-                    <div style='display:flex; align-items:center; gap:6px; margin-top:4px;'>
-                        <span style='background:{pos_col}; color:#fff; font-weight:800; font-size:0.72rem; border-radius:5px; padding:2px 7px;'>{p['position']}</span>
-                        <span style='background:#f1f5f9; color:#475569; font-weight:700; font-size:0.72rem; border-radius:5px; padding:2px 7px;'>{p['nfl_team']}</span>
-                        {inj_b}
-                    </div>
-                    <div style='font-size:0.76rem; color:#64748b; margin-top:4px;'>Owner: <strong>{p['owner_name']}</strong></div>
-                </div>
-                <div style='text-align:right;'>
-                    <div style='font-size:0.7rem; color:#64748b; font-weight:600; text-transform:uppercase;'>PPG</div>
-                    <div style='font-size:1.55rem; font-weight:800; color:{col_theme};'>{p['mean_points']:.1f}</div>
-                    <div style='font-size:0.72rem; color:#64748b;'>#{p['pos_rank']} {p['position']}</div>
-                </div>
-            </div>
-        </div>
-        """
-
-    head_a = make_player_header(p_a, '#2563eb', is_a=True)
-    head_b = make_player_header(p_b, '#059669', is_a=False)
-
-    return f"""
-    <div style='display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px;'>
-        {head_a}
-        {head_b}
-    </div>
-    """
-
-
-def _build_comp_banner_html(comp_data: Dict[str, Any]) -> str:
-    p_a = comp_data['player_a']
-    p_b = comp_data['player_b']
-    score_a = comp_data['wins_a']
-    score_b = comp_data['wins_b']
-    ties = comp_data['ties']
-
-    if score_a > score_b:
-        h2h_sub = f"🏆 <strong>{p_a['player_name']}</strong> outscored <strong>{p_b['player_name']}</strong> in {score_a} of {score_a + score_b + ties} weeks"
-    elif score_b > score_a:
-        h2h_sub = f"🏆 <strong>{p_b['player_name']}</strong> outscored <strong>{p_a['player_name']}</strong> in {score_b} of {score_a + score_b + ties} weeks"
-    else:
-        h2h_sub = f"🤝 Even split: Both players tied {score_a} — {score_b}"
-
-    return f"""
-    <div style='background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:10px 16px; margin-bottom:16px; text-align:center; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size:0.86rem; color:#334155;'>
-        {h2h_sub}
-    </div>
-    """
-
-
-def _build_comp_verdict_html(comp_data: Dict[str, Any]) -> str:
-    bullets_html = "".join([f"<li style='margin-bottom:6px;'>{b}</li>" for b in comp_data['verdict_bullets']])
-    return f"""
-    <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:14px; padding:18px 22px; margin-bottom:16px; box-shadow:0 1px 4px rgba(0,0,0,0.03); font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;'>
-        <div style='display:flex; align-items:center; gap:8px; margin-bottom:10px;'>
-            <span style='font-size:1.15rem;'>🧠</span>
-            <span style='font-weight:800; font-size:0.95rem; color:#0f172a;'>Automated Comparison Analysis & Verdict</span>
-        </div>
-        <ul style='margin:0 0 12px 18px; padding:0; font-size:0.84rem; color:#334155; line-height:1.5;'>
-            {bullets_html}
-        </ul>
-        <div style='background:#f8fafc; border-left:3px solid #2563eb; padding:10px 14px; border-radius:6px; font-size:0.84rem; color:#0f172a;'>
-            💡 {comp_data['recommendation']}
-        </div>
-    </div>
-    """
-
-
-def _build_comp_tape_html(comp_data: Dict[str, Any]) -> str:
-    p_a = comp_data['player_a']
-    p_b = comp_data['player_b']
-
-    metric_rows = []
-    for m in comp_data['metrics_comp']:
-        w = m['winner']
-        style_a = "background:#eff6ff; font-weight:800; color:#1d4ed8;" if w == 'A' else "color:#475569;"
-        style_b = "background:#ecfdf5; font-weight:800; color:#047857;" if w == 'B' else "color:#475569;"
-        badge_a = " <span style='color:#1d4ed8; font-size:0.8rem;'>✓</span>" if w == 'A' else ""
-        badge_b = " <span style='color:#047857; font-size:0.8rem;'>✓</span>" if w == 'B' else ""
-
-        metric_rows.append(f"""
-        <tr style='border-bottom:1px solid #f1f5f9; height:44px;'>
-            <td style='padding:8px 16px; text-align:right; width:36%; {style_a}'>{m['val_a']}{badge_a}</td>
-            <td style='padding:8px 12px; text-align:center; width:28%; font-weight:700; color:#0f172a; font-size:0.82rem; background:#fafbfc;'>{m['metric']}</td>
-            <td style='padding:8px 16px; text-align:left; width:36%; {style_b}'>{badge_b}{m['val_b']}</td>
-        </tr>
-        """)
-
-    return f"""
-    <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:14px; overflow:hidden; margin-bottom:16px; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; box-shadow:0 1px 4px rgba(0,0,0,0.03);'>
-        <div style='background:#f8fafc; padding:12px 18px; font-weight:700; font-size:0.92rem; color:#0f172a; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;'>
-            <span>🥊 Tale of the Tape (Metrics Side-by-Side)</span>
-            <span style='font-size:0.75rem; color:#64748b;'>✓ Indicates winning metric</span>
-        </div>
-        <div style='overflow-x:auto;'>
-            <table style='width:100%; border-collapse:collapse; font-size:0.84rem;'>
-                <thead>
-                    <tr style='background:#fafbfc; border-bottom:1px solid #e2e8f0; color:#64748b; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px;'>
-                        <th style='padding:10px 16px; text-align:right; width:36%; color:#1d4ed8;'>{p_a['player_name']}</th>
-                        <th style='padding:10px 12px; text-align:center; width:28%;'>Metric Category</th>
-                        <th style='padding:10px 16px; text-align:left; width:36%; color:#047857;'>{p_b['player_name']}</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {''.join(metric_rows)}
-                </tbody>
-            </table>
-        </div>
-    </div>
-    """
-
-
-def _build_comp_chart_header(comp_data: Dict[str, Any]) -> str:
-    p_a = comp_data['player_a']
-    p_b = comp_data['player_b']
-    return f"""
-    <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:14px 14px 0 0; padding:14px 18px; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; border-bottom:1px solid #e2e8f0; margin-top:6px;'>
-        <div style='display:flex; justify-content:space-between; align-items:center;'>
-            <div>
-                <span style='font-weight:800; font-size:0.96rem; color:#0f172a;'>📊 Head-to-Head Weekly Fantasy Points Comparison</span>
-                <span style='font-size:0.76rem; color:#64748b; margin-left:8px;'>({p_a['player_name']} in Blue vs {p_b['player_name']} in Green)</span>
-            </div>
-            <div style='font-size:0.74rem; color:#64748b;'>Hover bars to inspect weekly scores</div>
-        </div>
-    </div>
-    """
-
-
-def _build_comp_h2h_table(comp_data: Dict[str, Any]) -> str:
-    p_a = comp_data['player_a']
-    p_b = comp_data['player_b']
-    score_a = comp_data['wins_a']
-    score_b = comp_data['wins_b']
-
-    h2h_rows = []
-    for _, hr in comp_data['h2h_df'].sort_values(by='week', ascending=False).iterrows():
-        w_key = hr['winner_key']
-        if w_key == 'A':
-            win_pill = f"<span style='background:#eff6ff; border:1px solid #bfdbfe; color:#1d4ed8; font-weight:800; font-size:0.75rem; border-radius:6px; padding:2px 8px;'>{p_a['player_name']} (+{hr['margin']:.1f})</span>"
-        elif w_key == 'B':
-            win_pill = f"<span style='background:#ecfdf5; border:1px solid #a7f3d0; color:#047857; font-weight:800; font-size:0.75rem; border-radius:6px; padding:2px 8px;'>{p_b['player_name']} (+{hr['margin']:.1f})</span>"
-        else:
-            win_pill = "<span style='background:#f8fafc; border:1px solid #e2e8f0; color:#64748b; font-weight:700; font-size:0.75rem; border-radius:6px; padding:2px 8px;'>Tie (0.0)</span>"
-
-        h2h_rows.append(f"""
-        <tr style='border-bottom:1px solid #f1f5f9; height:42px;'>
-            <td style='padding:8px 14px; font-weight:700; color:#0f172a;'>Week {int(hr['week'])}</td>
-            <td style='padding:8px 14px; text-align:right; font-weight:700; color:{'#1d4ed8' if w_key == 'A' else '#475569'};'>{hr['pts_a']:.1f}</td>
-            <td style='padding:8px 14px; text-align:right; font-weight:700; color:{'#047857' if w_key == 'B' else '#475569'};'>{hr['pts_b']:.1f}</td>
-            <td style='padding:8px 14px; text-align:center;'>{win_pill}</td>
-        </tr>
-        """)
-
-    return f"""
-    <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:14px; overflow:hidden; margin-top:16px; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; box-shadow:0 1px 4px rgba(0,0,0,0.03);'>
-        <div style='background:#f8fafc; padding:12px 18px; font-weight:700; font-size:0.92rem; color:#0f172a; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;'>
-            <span>⚔️ Week-by-Week Head-to-Head Record</span>
-            <span style='font-size:0.78rem; font-weight:700; color:#0f172a;'>{p_a['player_name']} {score_a} — {score_b} {p_b['player_name']}</span>
-        </div>
-        <div style='overflow-x:auto;'>
-            <table style='width:100%; border-collapse:collapse; font-size:0.84rem;'>
-                <thead>
-                    <tr style='background:#fafbfc; border-bottom:1px solid #e2e8f0; color:#64748b; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px;'>
-                        <th style='padding:10px 14px; text-align:left;'>Week</th>
-                        <th style='padding:10px 14px; text-align:right; width:130px; color:#1d4ed8;'>{p_a['player_name']}</th>
-                        <th style='padding:10px 14px; text-align:right; width:130px; color:#047857;'>{p_b['player_name']}</th>
-                        <th style='padding:10px 14px; text-align:center; width:200px;'>Weekly Winner</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {''.join(h2h_rows)}
-                </tbody>
-            </table>
-        </div>
-    </div>
-    """
-
-
-def render_player_comparison_view(
-    comp_data: Dict[str, Any],
-    owner_colors: Optional[Dict[str, str]] = None,
-    mo: Any = None
-) -> Any:
-    """
-    Produce clean Marimo-native rendered view for head-to-head player comparison.
-    Combines player cards, automated verdict card, tale of the tape table, Altair grouped chart, and weekly matchup table.
-    """
-    if mo is None:
-        import marimo as mo
-
-    if not comp_data:
-        return mo.md("Please select two players to compare.")
-
-    from src.visual import build_player_comparison_chart
-    chart = build_player_comparison_chart(
-        df_comp=comp_data['combined_chart_df'],
-        name_a=comp_data['player_a']['player_name'],
-        name_b=comp_data['player_b']['player_name'],
-        color_a='#2563eb',
-        color_b='#059669',
-        chart_width=860,
-        chart_height=320
-    )
-
-    heads_html = _build_comp_headers_html(comp_data, owner_colors)
-    banner_html = _build_comp_banner_html(comp_data)
-    verdict_html = _build_comp_verdict_html(comp_data)
-    tape_html = _build_comp_tape_html(comp_data)
-    chart_header = _build_comp_chart_header(comp_data)
-    h2h_html = _build_comp_h2h_table(comp_data)
-
-    return mo.vstack([
-        mo.Html(heads_html),
-        mo.Html(banner_html),
-        mo.Html(verdict_html),
-        mo.Html(tape_html),
-        mo.Html(chart_header),
-        mo.ui.altair_chart(chart),
-        mo.Html(h2h_html)
-    ], gap=1)
+# Domain aliases for clean API nomenclature
+get_player_profile = get_player_detailed_analytics
+compare_players = get_player_comparison_analytics

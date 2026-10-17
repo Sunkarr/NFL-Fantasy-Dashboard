@@ -689,7 +689,7 @@ def generate_trade_recommendations(
     max_recs: int = 15
 ) -> List[Dict[str, Any]]:
     """
-    Algorithmic Trade Matchmaker:
+    Complementary Trade Matcher (Needs-Based Analysis):
     Proposes win-win deals matching complementary surplus & deficit positions.
     Evaluates:
     - Balanced 1-for-1 swaps
@@ -835,7 +835,7 @@ def render_trade_finder_view(
     Sections:
     1. Top KPI Summary Grid
     2. Positional Surplus vs. Deficit Matrix Table
-    3. AI Trade Target Matchmaker (Top Win-Win Recommendations)
+    3. Complementary Trade Matcher (Needs-Based Swaps)
     4. Interactive Trade Value Calculator & Lineup Simulator
     """
     if not analysis or "team_profiles" not in analysis:
@@ -1031,7 +1031,7 @@ def render_trade_finder_view(
     </div>
     """
 
-    # SECTION 2: AI Trade Target Matchmaker (Cards)
+    # SECTION 2: Complementary Trade Matcher (Cards)
     rec_cards = []
     if not recommendations:
         rec_cards.append("""
@@ -1117,8 +1117,8 @@ def render_trade_finder_view(
     <div style="margin-top:18px; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
             <div>
-                <div style="font-weight:800; font-size:1.05rem; color:#0f172a;">🎯 AI Trade Target Matchmaker (Top Win-Win Swaps)</div>
-                <div style="font-size:0.78rem; color:#64748b;">Algorithmic proposals matching complementary roster surplus and deficit positions to upgrade starting lineups.</div>
+                <div style="font-weight:800; font-size:1.05rem; color:#0f172a;">🎯 Statistical Trade Target Matcher (Needs-Based Swaps)</div>
+                <div style="font-size:0.78rem; color:#64748b;">Statistical proposals matching complementary roster surplus and deficit positions to optimize starting lineups.</div>
             </div>
         </div>
         <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap:12px;">
