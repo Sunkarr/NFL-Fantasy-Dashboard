@@ -511,7 +511,7 @@ def get_player_detailed_analytics(
         consistency_tier = "🟢 Low Variance"
         consistency_desc = "Consistent weekly output (Std Dev < 4.5 FPTS)"
     elif std_points < 9.0:
-        consistency_tier = "🟡 Moderate Variance"
+        consistency_tier = "🟡 Moderate"
         consistency_desc = "Standard scoring spread (Std Dev 4.5–9.0 FPTS)"
     else:
         consistency_tier = "🔴 High Variance"

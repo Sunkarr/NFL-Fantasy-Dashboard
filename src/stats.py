@@ -40,11 +40,11 @@ def compute_player_aggregates(df_stats: pd.DataFrame) -> pd.DataFrame:
     # Consistency 3-Tier Classification
     def classify_consistency(sd: float) -> str:
         if sd < 4.5:
-            return "🟢 Rock Solid"
+            return "🟢 Low Variance"
         elif sd < 9.0:
             return "🟡 Moderate"
         else:
-            return "🔴 Boom / Bust"
+            return "🔴 High Variance"
 
     agg['consistency_tier'] = agg['std_points'].apply(classify_consistency)
 
@@ -78,7 +78,7 @@ def get_team_roster_analytics(
     Compute dedicated team-level metrics:
     - Starting Lineup vs Bench subsets
     - Injury breakdown (Healthy vs Injured count)
-    - Consistency metrics (Rock Solid vs Volatile)
+    - Variance metrics (Low vs High Variance)
     - Top-10 elite asset metrics
     - Positional output breakdown and total PPG
     - Starters and bench injury lists for detailed tooltip pinpoints

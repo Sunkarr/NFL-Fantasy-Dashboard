@@ -1421,7 +1421,7 @@ def render_player_market_view(
 
     # Sell-High Candidates:
     # Must be currently HEALTHY, with substantial trade equity (TV >= 25.0) and high scoring (score >= 15.0),
-    # but accompanied by high volatility / boom-bust risk (std_points >= 8.0).
+    # but accompanied by high volatility / scoring variance (std_points >= 8.0).
     # STRICT DISJOINT GUARANTEE: Never include any player flagged in the Buy-Low list!
     sell_high_mask = (
         (~val_df["player_id"].astype(str).isin(buy_low_ids)) &
@@ -1491,7 +1491,7 @@ def render_player_market_view(
                 bg = "#f0fdf4"
                 border = "#bbf7d0"
             else:
-                note = f"High Boom/Bust: ±{sd:.1f} SD ({score:.1f} PPG)"
+                note = f"High Variance: ±{sd:.1f} SD ({score:.1f} PPG)"
                 color = "#b45309"
                 bg = "#fffbeb"
                 border = "#fde68a"
@@ -1534,7 +1534,7 @@ def render_player_market_view(
                 <span style="font-size:1.1rem;">⚡</span>
                 <div>
                     <div style="font-weight:800; font-size:0.92rem; color:#0f172a;">Target Sell-High Candidates</div>
-                    <div style="font-size:0.72rem; color:#64748b;">Players carrying volatile boom-bust profiles currently valued at peak market output.</div>
+                    <div style="font-size:0.72rem; color:#64748b;">Players with high weekly scoring variance currently valued near peak market output.</div>
                 </div>
             </div>
             {_render_radar_items(sell_high_cands, is_buy=False)}
