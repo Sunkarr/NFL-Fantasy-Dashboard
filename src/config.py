@@ -71,6 +71,9 @@ NFL_TEAM_NAMES = {
     'KC':  'Kansas City Chiefs',
     'LAC': 'Los Angeles Chargers',
     'LAR': 'Los Angeles Rams',
+    'LA':  'Los Angeles Rams',
+    'JAC': 'Jacksonville Jaguars',
+    'WSH': 'Washington Commanders',
     'LV':  'Las Vegas Raiders',
     'MIA': 'Miami Dolphins',
     'MIN': 'Minnesota Vikings',
@@ -107,7 +110,10 @@ NFL_TEAM_COLORS = {
     'JAX': '#006778',  # Jacksonville Jaguars
     'KC':  '#E31837',  # Kansas City Chiefs
     'LAC': '#0080C6',  # Los Angeles Chargers
-    'LAR': '#003594',  # Los Angeles Rams
+    'LAR': '#003594',
+    'LA':  '#003594',
+    'JAC': '#006778',
+    'WSH': '#5A1414',  # Los Angeles Rams
     'LV':  '#000000',  # Las Vegas Raiders
     'MIA': '#008E97',  # Miami Dolphins
     'MIN': '#4F2683',  # Minnesota Vikings

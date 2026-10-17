@@ -8,7 +8,7 @@ from src.config import TEAM_PALETTE, FREE_AGENT_COLOR, NFL_TEAM_COLORS, NFL_TEAM
 from src.optimizer import get_cached_or_live_projections, get_league_scoring_settings, calculate_projected_points
 
 def resolve_nfl_team(val: Any, fallback: str = "FA") -> str:
-    """Safely resolve NFL franchise abbreviation without NaN / None / 'nan' strings."""
+    """Safely resolve and canonicalize NFL franchise abbreviation."""
     if val is None or pd.isna(val):
         candidate = str(fallback or "FA").strip().upper()
     else:
@@ -17,7 +17,17 @@ def resolve_nfl_team(val: Any, fallback: str = "FA") -> str:
         candidate = str(fallback or "FA").strip().upper()
     if not candidate or candidate in ("NAN", "NONE", "NULL", ""):
         return "FA"
-    return candidate
+
+    # Canonicalize historical Sleeper franchise codes across seasons
+    aliases = {
+        "LA": "LAR",
+        "JAC": "JAX",
+        "WSH": "WAS",
+        "OAK": "LV",
+        "SD": "LAC",
+        "STL": "LAR",
+    }
+    return aliases.get(candidate, candidate)
 
 
 
