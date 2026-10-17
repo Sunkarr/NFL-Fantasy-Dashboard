@@ -87,11 +87,10 @@ def _build_profile_header_html(data: Any, owner_colors: Optional[Dict[str, str]]
                     <div style='font-size:0.95rem; font-weight:800; color:#dc2626;'>{data.get('injury_discount'):.2f}x</div>
                 </div>''' if data.get('injury_discount') and data.get('injury_discount') < 1.0 else ''}
             </div>
-            <!-- Final Scaled Market Score -->
-            <div style='text-align:right; background:#f0fdf4; border:1.5px solid #bbf7d0; border-radius:12px; padding:10px 18px;'>
-                <div style='font-size:0.68rem; font-weight:800; color:#15803d; text-transform:uppercase; letter-spacing:0.5px;'>Market Trade Value</div>
-                <div style='font-size:1.65rem; font-weight:900; color:#15803d; line-height:1.1;'>{data['trade_value']:.1f} <span style='font-size:0.85rem; font-weight:700; color:#16a34a;'>TV</span></div>
-                <div style='font-size:0.65rem; color:#16a34a; font-weight:600;'>0-100 Scaled VORP</div>
+            <!-- Final Scaled Market Score (Purple / Violet matching Player Market & Trades Page) -->
+            <div style='text-align:right; background:#faf5ff; border:1.5px solid #ddd6fe; border-radius:12px; padding:10px 18px;'>
+                <div style='font-size:0.68rem; font-weight:800; color:#7c3aed; text-transform:uppercase; letter-spacing:0.5px;'>Market Trade Value</div>
+                <div style='font-size:1.65rem; font-weight:900; color:#7c3aed; line-height:1.1;'>{data['trade_value']:.1f} <span style='font-size:0.85rem; font-weight:700; color:#8b5cf6;'>TV</span></div>
             </div>
         </div>
     </div>
@@ -134,7 +133,7 @@ def _build_profile_kpi_html(data: Any) -> str:
         <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:12px; padding:14px 16px; box-shadow:0 1px 3px rgba(0,0,0,0.02);'>
             <div style='font-size:0.75rem; font-weight:600; color:#64748b; text-transform:uppercase;'>🏥 Availability</div>
             <div style='font-size:1.45rem; font-weight:800; color:{data['health_color']}; margin:3px 0 1px 0;'>{data['availability_pct']:.0f}% <span style='font-size:0.8rem; font-weight:600; color:#64748b;'>({data['games_played']}/{data['total_active_weeks']} Wks)</span></div>
-            <div style='font-size:0.74rem; color:#64748b; font-weight:600;'>{data['health_assessment']}</div>
+            {f"<div style='font-size:0.74rem; color:{data['health_color']}; font-weight:600;'>{data['health_assessment']}</div>" if (data.get('missed_games', 0) > 0 or data.get('injury_status') not in ('Healthy', 'Active', 'None', '')) else ""}
         </div>
 
         <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:12px; padding:14px 16px; box-shadow:0 1px 3px rgba(0,0,0,0.02);'>
@@ -148,13 +147,12 @@ def _build_profile_kpi_html(data: Any) -> str:
         <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:12px; padding:14px 16px; box-shadow:0 1px 3px rgba(0,0,0,0.02);'>
             <div style='font-size:0.75rem; font-weight:600; color:#64748b; text-transform:uppercase;'>🏆 Best Week</div>
             <div style='font-size:1.45rem; font-weight:800; color:#15803d; margin:3px 0 1px 0;'>{data['ceiling_points']:.1f} <span style='font-size:0.8rem; font-weight:600; color:#64748b;'>FPTS</span></div>
-            <div style='font-size:0.74rem; color:#64748b;'>Week {int(data['best_week']) if pd.notna(data['best_week']) and data['best_week'] else '—'}</div>
+            <div style='font-size:0.74rem; color:#64748b;'>Week {int(data['best_week']) if pd.notna(data.get('best_week')) and data.get('best_week') else '—'} (2026)</div>
         </div>
 
         <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:12px; padding:14px 16px; box-shadow:0 1px 3px rgba(0,0,0,0.02);'>
             <div style='font-size:0.75rem; font-weight:600; color:#64748b; text-transform:uppercase;'>📊 Total Output</div>
             <div style='font-size:1.45rem; font-weight:800; color:#0f172a; margin:3px 0 1px 0;'>{data['total_points']:.1f} <span style='font-size:0.8rem; font-weight:600; color:#64748b;'>FPTS</span></div>
-            <div style='font-size:0.74rem; color:#64748b;'>{data.get('history_summary_str', f"{data['games_played']} games in 2026")}</div>
         </div>
     </div>
     """
@@ -238,33 +236,57 @@ def _build_profile_log_table_html(data: Any) -> str:
 
     game_rows = []
     if w_df is not None and not w_df.empty:
-        for _, r in w_df.sort_values(by='week', ascending=False).iterrows():
-            wk = int(r['week'])
+        df_sorted = w_df.copy()
+        df_sorted['season_num'] = pd.to_numeric(df_sorted['season'], errors='coerce').fillna(2026).astype(int)
+        df_sorted['week_num'] = pd.to_numeric(df_sorted['week'], errors='coerce').fillna(1).astype(int)
+        # Sort chronologically reverse: latest season first, latest week first
+        df_sorted = df_sorted.sort_values(by=['season_num', 'week_num'], ascending=[False, False])
+
+        for _, r in df_sorted.iterrows():
+            wk = int(r['week_num'])
+            s_val = str(r['season'])
+            is_curr = (s_val == '2026')
             pts = float(r['points']) if pd.notna(r['points']) else 0.0
 
-            # Projections
-            proj = float(r['projected_points']) if 'projected_points' in r and pd.notna(r['projected_points']) else None
-            if proj is not None:
-                p_diff = pts - proj
-                p_diff_color = "#16a34a" if p_diff >= 0 else "#dc2626"
-                p_diff_str = f"+{p_diff:.1f}" if p_diff >= 0 else f"{p_diff:.1f}"
-                proj_cell = f"<td style='padding:8px 12px; text-align:right;'><span style='color:#64748b; font-weight:600;'>{proj:.1f}</span> <span style='font-size:0.7rem; color:{p_diff_color}; font-weight:700;'>({p_diff_str})</span></td>"
+            # Projections & Delta vs Proj (Separate Columns)
+            proj = float(r['projected_points']) if 'projected_points' in r and pd.notna(r['projected_points']) else 0.0
+            if is_curr and proj > 0:
+                p_diff = round(pts - proj, 1)
+                proj_cell = f"<td style='padding:8px 12px; text-align:right; font-weight:600; color:#475569;'>{proj:.1f}</td>"
+                if p_diff > 0:
+                    diff_badge = f"<span style='background:#f0fdf4; border:1px solid #bbf7d0; color:#15803d; border-radius:5px; padding:2px 7px; font-weight:700; font-size:0.75rem;'>+{p_diff:.1f}</span>"
+                elif p_diff < 0:
+                    diff_badge = f"<span style='background:#fef2f2; border:1px solid #fecaca; color:#dc2626; border-radius:5px; padding:2px 7px; font-weight:700; font-size:0.75rem;'>{p_diff:.1f}</span>"
+                else:
+                    diff_badge = "<span style='background:#f8fafc; border:1px solid #e2e8f0; color:#64748b; border-radius:5px; padding:2px 7px; font-weight:600; font-size:0.75rem;'>0.0</span>"
+                diff_cell = f"<td style='padding:8px 12px; text-align:center;'>{diff_badge}</td>"
             else:
-                proj_cell = "<td style='padding:8px 12px; text-align:right; color:#94a3b8;'>—</td>"
+                proj_cell = "<td style='padding:8px 12px; text-align:right; color:#94a3b8; font-weight:600;'>-</td>"
+                diff_cell = "<td style='padding:8px 12px; text-align:center; color:#94a3b8; font-size:0.75rem;'>-</td>"
 
-            opp = r.get('opponent')
-            opp_code = resolve_nfl_team(opp, fallback="")
-            if not opp_code or opp_code == "FA" or opp_code == player_nfl:
-                opp_code = "BYE / Off"
-            opp_str = f"vs {opp_code}" if opp_code != "BYE / Off" else "<span style='color:#94a3b8;'>BYE</span>"
-
-            status = r.get('fantasy_status', 'FA')
-            if status == 'Starter':
+            # Matchup Role: starter oder bench
+            status = str(r.get('fantasy_status', ''))
+            if status in ('Starter', 'Started'):
                 status_badge = "<span style='background:#f0fdf4; border:1px solid #bbf7d0; color:#15803d; border-radius:6px; padding:2px 8px; font-weight:700; font-size:0.72rem;'>Starter</span>"
-            elif status == 'Bench':
+            elif status in ('Bench', 'Reserve', 'Rostered'):
                 status_badge = "<span style='background:#f8fafc; border:1px solid #e2e8f0; color:#64748b; border-radius:6px; padding:2px 8px; font-weight:600; font-size:0.72rem;'>Bench</span>"
+            elif is_curr and status in ('Free Agent', 'FA'):
+                status_badge = "<span style='color:#94a3b8; font-size:0.72rem; font-weight:600;'>FA</span>"
             else:
-                status_badge = "<span style='color:#94a3b8; font-size:0.72rem;'>FA</span>"
+                status_badge = "<span style='color:#94a3b8; font-size:0.75rem;'>-</span>"
+
+            # NFL Team badge
+            row_team = resolve_nfl_team(r.get('nfl_team'), fallback=player_nfl)
+            t_col = NFL_TEAM_COLORS.get(row_team, '#00338D')
+            team_badge = f"<span style='background:{t_col}15; color:{t_col}; border:1px solid {t_col}35; font-weight:800; font-size:0.72rem; border-radius:4px; padding:2px 7px;'>{row_team}</span>"
+
+            # Week cell with season badge + gentle light-blue highlighting for 2026
+            if is_curr:
+                week_cell = f"<span style='background:#eff6ff; color:#1d4ed8; font-weight:800; font-size:0.72rem; border-radius:4px; padding:2px 6px; border:1px solid #bfdbfe;'>2026</span> <strong style='color:#0f172a; margin-left:6px;'>Week {wk}</strong>"
+                row_bg = "background:#f0f7ff; border-bottom:1px solid #e0eefe;"
+            else:
+                week_cell = f"<span style='background:#f1f5f9; color:#64748b; font-weight:700; font-size:0.72rem; border-radius:4px; padding:2px 6px;'>{s_val}</span> <span style='color:#64748b; margin-left:6px;'>Week {wk}</span>"
+                row_bg = "background:#ffffff; border-bottom:1px solid #f1f5f9;"
 
             stat_line_parts = []
             if 'pass_yd' in r and float(r.get('pass_yd', 0)) > 0:
@@ -276,12 +298,13 @@ def _build_profile_log_table_html(data: Any) -> str:
             stat_line = " • ".join(stat_line_parts) if stat_line_parts else "—"
 
             game_rows.append(f"""
-            <tr style='border-bottom:1px solid #f1f5f9; height:40px;'>
-                <td style='padding:8px 12px; font-weight:700; color:#0f172a;'>Week {wk}</td>
-                <td style='padding:8px 12px; color:#475569;'>{opp_str}</td>
+            <tr style='{row_bg} height:40px;'>
+                <td style='padding:8px 12px; white-space:nowrap;'>{week_cell}</td>
+                <td style='padding:8px 12px; text-align:center;'>{team_badge}</td>
                 <td style='padding:8px 12px; text-align:center;'>{status_badge}</td>
                 {proj_cell}
                 <td style='padding:8px 12px; text-align:right; font-weight:800; color:{'#15803d' if pts >= 18 else ('#2563eb' if pts >= 10 else '#64748b')};'>{pts:.2f}</td>
+                {diff_cell}
                 <td style='padding:8px 12px; color:#64748b; font-size:0.78rem;'>{stat_line}</td>
             </tr>
             """)
@@ -297,10 +320,11 @@ def _build_profile_log_table_html(data: Any) -> str:
                 <thead>
                     <tr style='background:#fafbfc; border-bottom:1px solid #e2e8f0; color:#64748b; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px;'>
                         <th style='padding:10px 12px; text-align:left;'>Week</th>
-                        <th style='padding:10px 12px; text-align:left;'>Opponent</th>
+                        <th style='padding:10px 12px; text-align:center;'>NFL Team</th>
                         <th style='padding:10px 12px; text-align:center;'>Matchup Role</th>
                         <th style='padding:10px 12px; text-align:right;'>Projected</th>
                         <th style='padding:10px 12px; text-align:right;'>Fantasy Pts</th>
+                        <th style='padding:10px 12px; text-align:center;'>vs Proj</th>
                         <th style='padding:10px 12px; text-align:left;'>Key Statistics</th>
                     </tr>
                 </thead>

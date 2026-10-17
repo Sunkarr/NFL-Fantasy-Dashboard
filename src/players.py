@@ -134,8 +134,10 @@ class PlayerProfile:
     weekly_df: pd.DataFrame
     best_week: Optional[int]
     best_pts: Optional[float]
+    best_season: str
     worst_week: Optional[int]
     worst_pts: Optional[float]
+    career_best_str: str
     tot_pass_yd: float
     tot_pass_td: float
     tot_pass_int: float
@@ -389,7 +391,7 @@ def get_player_detailed_analytics(
                 week_label = f"Week {w}"
                 m_info = matchup_by_week.get(w)
                 if m_info:
-                    f_status = "Started" if m_info['started'] == 1 else "Bench"
+                    f_status = "Starter" if m_info['started'] == 1 else "Bench"
                 else:
                     f_status = "Free Agent" if team_name == "Free Agent" else "Rostered"
             else:
@@ -430,7 +432,7 @@ def get_player_detailed_analytics(
                 points_2026_list.append(pts)
                 m_info = matchup_by_week.get(w)
                 if m_info:
-                    f_status = "Started" if m_info['started'] == 1 else "Bench"
+                    f_status = "Starter" if m_info['started'] == 1 else "Bench"
                 else:
                     f_status = "Free Agent" if team_name == "Free Agent" else "Rostered"
                 row_team = resolve_nfl_team(sr.get('nfl_team'), fallback=nfl_team)
@@ -496,8 +498,9 @@ def get_player_detailed_analytics(
     history_by_season = {}
     history_snippets = []
     if not df_weekly.empty:
-        past_seasons = sorted([s for s in df_weekly['season'].unique() if str(s) != '2026'], reverse=True)
-        for s_val in past_seasons:
+        # Include current season 2026 and past seasons, sorted reverse chronologically
+        all_seasons = sorted([s for s in df_weekly['season'].unique()], key=lambda x: int(x) if str(x).isdigit() else 0, reverse=True)
+        for s_val in all_seasons:
             s_rows = df_weekly[df_weekly['season'] == s_val]
             s_pts = s_rows['points'].tolist()
             if s_pts:
@@ -583,18 +586,39 @@ def get_player_detailed_analytics(
             max_benchmark = max(float(val_df['raw_trade_value'].max()), 1.0)
         trade_value = round(min(98.0, max(1.0, (raw_trade_value / max_benchmark) * 98.0)), 1)
 
-    # Best and Worst game
+    # Best and Worst game (Current Season 2026 vs Career)
     best_week = None
     best_pts = None
+    best_season = '2026'
     worst_week = None
     worst_pts = None
-    if not df_weekly.empty:
+    career_best_str = ""
+
+    df_2026_w = df_weekly[df_weekly['season'].astype(str) == '2026'] if not df_weekly.empty else pd.DataFrame()
+    if not df_2026_w.empty:
+        best_2026_row = df_2026_w.sort_values(by='points', ascending=False).iloc[0]
+        best_week = int(best_2026_row['week'])
+        best_pts = float(best_2026_row['points'])
+        best_season = '2026'
+        worst_2026_row = df_2026_w.sort_values(by='points', ascending=True).iloc[0]
+        worst_week = int(worst_2026_row['week'])
+        worst_pts = float(worst_2026_row['points'])
+    elif not df_weekly.empty:
         best_row = df_weekly.sort_values(by='points', ascending=False).iloc[0]
-        worst_row = df_weekly.sort_values(by='points', ascending=True).iloc[0]
         best_week = int(best_row['week'])
         best_pts = float(best_row['points'])
+        best_season = str(best_row['season'])
+        worst_row = df_weekly.sort_values(by='points', ascending=True).iloc[0]
         worst_week = int(worst_row['week'])
         worst_pts = float(worst_row['points'])
+
+    if not df_weekly.empty and best_pts is not None:
+        career_best_row = df_weekly.sort_values(by='points', ascending=False).iloc[0]
+        c_pts = float(career_best_row['points'])
+        c_wk = int(career_best_row['week'])
+        c_season = str(career_best_row['season'])
+        if c_pts > best_pts:
+            career_best_str = f" <span style='font-size:0.68rem; color:#64748b;'>• Career: {c_pts:.1f} ('{c_season[-2:]} W{c_wk})</span>" 
 
     # Totals for stat categories
     tot_pass_yd = float(df_weekly['pass_yd'].sum()) if 'pass_yd' in df_weekly.columns else 0.0
@@ -641,8 +665,10 @@ def get_player_detailed_analytics(
         weekly_df=df_weekly,
         best_week=best_week,
         best_pts=best_pts,
+        best_season=best_season,
         worst_week=worst_week,
         worst_pts=worst_pts,
+        career_best_str=career_best_str,
         tot_pass_yd=tot_pass_yd,
         tot_pass_td=tot_pass_td,
         tot_pass_int=tot_pass_int,
