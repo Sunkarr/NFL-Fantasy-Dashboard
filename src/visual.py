@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 import altair as alt
 import pandas as pd
 from src.config import TEAM_PALETTE, FREE_AGENT_COLOR, NFL_TEAM_COLORS
@@ -398,7 +398,25 @@ def build_player_weekly_bar_chart(
     # Opacity: Current 2026 season stands out with 1.0 opacity; historical seasons are slightly dimmed (0.75)
     df_plot['opacity'] = df_plot['season'].apply(lambda s: 1.0 if str(s) == '2026' else 0.75)
 
+    # For very dark team colors (LV #000000, SEA #002244, CHI #0B162A, HOU #03202F, etc.),
+    # use a crisp silver-grey needle (#94a3b8) instead of black so the target is clearly visible.
+    def _is_dark_hex(hex_val: Any) -> bool:
+        if not hex_val or not isinstance(hex_val, str) or not hex_val.startswith('#') or len(hex_val) < 7:
+            return False
+        try:
+            r = int(hex_val[1:3], 16)
+            g = int(hex_val[3:5], 16)
+            b = int(hex_val[5:7], 16)
+            return (0.299 * r + 0.587 * g + 0.114 * b) < 50.0
+        except Exception:
+            return False
+
+    df_plot['proj_color'] = df_plot['bar_color'].apply(lambda c: '#94a3b8' if _is_dark_hex(c) else '#000000')
+
     max_pts = float(df_plot['points'].max()) if not df_plot.empty else 20.0
+    if 'projected_points' in df_plot.columns and not df_plot['projected_points'].empty:
+        max_proj = float(df_plot['projected_points'].fillna(0.0).max())
+        max_pts = max(max_pts, max_proj)
     y_max = max(max_pts + 5.0, mean_points + 5.0, 15.0)
 
     n_bars = len(df_plot)
@@ -409,10 +427,15 @@ def build_player_weekly_bar_chart(
     tooltips = [
         alt.Tooltip('season:N', title='Season'),
         alt.Tooltip('week:Q', title='NFL Week'),
-        alt.Tooltip('points:Q', title='Fantasy Points', format='.1f'),
+        alt.Tooltip('points:Q', title='Actual Fantasy Points', format='.1f'),
+    ]
+    if 'projected_points' in df_plot.columns:
+        tooltips.append(alt.Tooltip('projected_points:Q', title='Target Projection', format='.1f'))
+        tooltips.append(alt.Tooltip('diff_vs_proj:Q', title='vs Projection', format='+.1f'))
+    tooltips.extend([
         alt.Tooltip('nfl_team:N', title='NFL Team'),
         alt.Tooltip('diff_vs_avg:Q', title='vs 2026 Avg', format='+.1f'),
-    ]
+    ])
     for col, title in [
         ('fantasy_status', 'Fantasy Status'),
         ('pass_yd', 'Pass Yds'),
@@ -454,16 +477,29 @@ def build_player_weekly_bar_chart(
         tooltip=tooltips
     )
 
-    text = base.mark_text(
-        dy=-8,
-        fontSize=9.5 if n_bars > 12 else 11,
-        fontWeight=700,
-        color='#1e293b'
-    ).encode(
-        x=alt.X('week_label:O', sort=x_order),
-        y=alt.Y('points:Q'),
-        text=alt.Text('points:Q', format='.1f')
-    )
+    layers = [bars]
+
+    # Target vertical needle line for weekly Sleeper projection centered on each bar
+    # (black on light/colorful teams, silver-grey on dark teams like LV, SEA, CHI, etc.)
+    if 'projected_points' in df_plot.columns:
+        df_proj = df_plot[df_plot['projected_points'] > 0].copy()
+        if not df_proj.empty:
+            proj_lines = alt.Chart(df_proj).mark_bar(
+                size=3.5,
+                opacity=0.95
+            ).encode(
+                x=alt.X('week_label:O', sort=x_order),
+                y=alt.Y('projected_points:Q', scale=alt.Scale(domain=[0, y_max])),
+                color=alt.Color('proj_color:N', scale=None),
+                tooltip=[
+                    alt.Tooltip('season:N', title='Season'),
+                    alt.Tooltip('week:Q', title='NFL Week'),
+                    alt.Tooltip('projected_points:Q', title='Target Projection', format='.1f'),
+                    alt.Tooltip('points:Q', title='Actual Points', format='.1f'),
+                    alt.Tooltip('diff_vs_proj:Q', title='vs Projection', format='+.1f')
+                ]
+            )
+            layers.append(proj_lines)
 
     avg_df = pd.DataFrame({'avg': [mean_points]})
     rule = alt.Chart(avg_df).mark_rule(
@@ -475,9 +511,9 @@ def build_player_weekly_bar_chart(
         y='avg:Q',
         tooltip=[alt.Tooltip('avg:Q', title='2026 Season Average', format='.1f')]
     )
+    layers.append(rule)
 
-    # Clean layered chart: text label removed from inside the chart area (now displayed cleanly in header legend only)
-    chart = alt.layer(bars, text, rule).properties(
+    chart = alt.layer(*layers).properties(
         width=effective_width,
         height=chart_height
     ).configure_view(
