@@ -634,9 +634,9 @@ def render_player_comparison_view(
     h2h_html = _build_comp_h2h_table(comp_data)
 
     chart = build_player_comparison_chart(
-        comp_df=comp_data['combined_chart_df'],
-        player_a_name=comp_data['player_a']['player_name'],
-        player_b_name=comp_data['player_b']['player_name'],
+        df_comp=comp_data['combined_chart_df'],
+        name_a=comp_data['player_a']['player_name'],
+        name_b=comp_data['player_b']['player_name'],
         chart_width=860,
         chart_height=300
     )

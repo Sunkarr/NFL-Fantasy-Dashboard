@@ -526,17 +526,32 @@ def build_player_weekly_bar_chart(
 
 
 def build_player_comparison_chart(
-    df_comp: pd.DataFrame,
-    name_a: str,
-    name_b: str,
+    df_comp: Optional[pd.DataFrame] = None,
+    name_a: Optional[str] = None,
+    name_b: Optional[str] = None,
     color_a: str = '#2563eb',
     color_b: str = '#059669',
     chart_width: int = 860,
     chart_height: int = 320,
+    *,
+    comp_df: Optional[pd.DataFrame] = None,
+    player_a_name: Optional[str] = None,
+    player_b_name: Optional[str] = None,
+    **kwargs: Any
 ) -> alt.Chart:
     """
     Build an interactive side-by-side grouped bar chart comparing two players week-by-week.
     """
+    if df_comp is None and comp_df is not None:
+        df_comp = comp_df
+    if name_a is None and player_a_name is not None:
+        name_a = player_a_name
+    if name_b is None and player_b_name is not None:
+        name_b = player_b_name
+
+    name_a = name_a or "Player A"
+    name_b = name_b or "Player B"
+
     if df_comp is None or df_comp.empty:
         return alt.Chart(pd.DataFrame()).mark_text()
 

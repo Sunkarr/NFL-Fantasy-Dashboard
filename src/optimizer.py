@@ -62,7 +62,7 @@ def get_cached_or_live_projections(
     if week is None:
         week = get_current_nfl_week()
 
-    cache_dir = db_path.parent
+    cache_dir = Path(db_path).parent
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_file = cache_dir / f"projections_{season}_{week}.json"
 
@@ -138,7 +138,7 @@ def get_nfl_bye_teams(
         return _bye_week_cache[cache_key]
 
     # 2. Persistent disk cache
-    cache_file = db_path.parent / f"bye_weeks_{s_str}.json"
+    cache_file = Path(db_path).parent / f"bye_weeks_{s_str}.json"
     if cache_file.exists():
         try:
             with open(cache_file, "r", encoding="utf-8") as f:
@@ -280,7 +280,7 @@ def get_week_matchup_starters(
     Uses a 2-minute TTL for current/upcoming weeks to reflect real-time lineup changes
     made in Sleeper, and 1-hour TTL for past weeks.
     """
-    cache_dir = db_path.parent
+    cache_dir = Path(db_path).parent
     cache_file = cache_dir / f"matchups_week_{week}.json"
 
     data = None
@@ -329,7 +329,7 @@ def get_matchup_pairings(
     Retrieve matchup pairings (opponent roster_id, opponent score) for a past week.
     Caches results locally to avoid redundant API calls.
     """
-    cache_dir = db_path.parent
+    cache_dir = Path(db_path).parent
     cache_file = cache_dir / f"matchups_week_{week}.json"
 
     data = None
